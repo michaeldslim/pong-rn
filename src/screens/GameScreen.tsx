@@ -89,7 +89,9 @@ export function GameScreen() {
   const aiScoreSV = useSharedValue(0);
   const playerScoreSV = useSharedValue(0);
   const isPlaying = useSharedValue(false);
-  const ballAttached = useSharedValue(false); // true = ball follows right paddle
+  const ballAttached = useSharedValue(false);
+  // 0 = attach to right (human) paddle, 1 = attach to left (AI) paddle
+  const ballAttachSide = useSharedValue(0);
 
   // ── Layout measurement
   const handleLayout = useCallback(
@@ -117,6 +119,21 @@ export function GameScreen() {
     [] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
+  // ── Unified ball launch: attach to paddle, delay, then release
+  // side: 0 = human (right), 1 = AI (left)
+  const launchBall = useCallback((side: 0 | 1) => {
+    ballAttachSide.value = side;
+    ballAttached.value = true;
+    ballVX.value = 0;
+    ballVY.value = 0;
+    setTimeout(() => {
+      ballAttached.value = false;
+      const spd = INITIAL_BALL_SPEED * stageSpeedBonus.value;
+      ballVX.value = side === 0 ? -spd : spd;
+      ballVY.value = spd * 0.3;
+    }, 500);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Game loop (UI thread)
   useFrameCallback((frameInfo: FrameInfo) => {
     if (!isPlaying.value) return;
@@ -130,10 +147,17 @@ export function GameScreen() {
         ? Math.min(frameInfo.timeSincePreviousFrame / 16.67, 2)
         : 1;
 
-    // ── Ball attached to right paddle (freeze phase)
+    // ── Ball attached to a paddle (freeze phase)
     if (ballAttached.value) {
-      ballX.value = rightPaddleX.value - BALL_SIZE - 4;
-      ballY.value = rightPaddleY.value + PADDLE_HEIGHT / 2 - BALL_SIZE / 2;
+      if (ballAttachSide.value === 0) {
+        // right (human) paddle
+        ballX.value = rightPaddleX.value - BALL_SIZE - 4;
+        ballY.value = rightPaddleY.value + PADDLE_HEIGHT / 2 - BALL_SIZE / 2;
+      } else {
+        // left (AI) paddle
+        ballX.value = leftPaddleX.value + PADDLE_WIDTH + 4;
+        ballY.value = leftPaddleY.value + PADDLE_HEIGHT / 2 - BALL_SIZE / 2;
+      }
       return;
     }
 
@@ -196,6 +220,7 @@ export function GameScreen() {
 
     // ── Scoring
     if (ballX.value + BALL_SIZE < 0) {
+      ballAttached.value = true; // guard: stop ball immediately on native thread
       const next = playerScoreSV.value + 1;
       playerScoreSV.value = next;
       runOnJS(setPlayerScore)(next);
@@ -203,12 +228,10 @@ export function GameScreen() {
         isPlaying.value = false;
         runOnJS(recordWinner)('You');
       } else {
-        ballX.value = W / 2 - BALL_SIZE / 2;
-        ballY.value = H / 2 - BALL_SIZE / 2;
-        ballVX.value = -INITIAL_BALL_SPEED * stageSpeedBonus.value;
-        ballVY.value = INITIAL_BALL_SPEED * stageSpeedBonus.value * 0.25;
+        runOnJS(launchBall)(0); // human scored → ball to human paddle
       }
     } else if (ballX.value > W) {
+      ballAttached.value = true; // guard: stop ball immediately on native thread
       const next = aiScoreSV.value + 1;
       aiScoreSV.value = next;
       runOnJS(setAiScore)(next);
@@ -216,31 +239,28 @@ export function GameScreen() {
         isPlaying.value = false;
         runOnJS(recordWinner)('AI');
       } else {
-        ballX.value = W / 2 - BALL_SIZE / 2;
-        ballY.value = H / 2 - BALL_SIZE / 2;
-        ballVX.value = INITIAL_BALL_SPEED * stageSpeedBonus.value;
-        ballVY.value = INITIAL_BALL_SPEED * stageSpeedBonus.value * 0.25;
+        runOnJS(launchBall)(1); // AI scored → ball to AI paddle
       }
     }
   });
 
+  const paddleDragStart = useSharedValue(0);
+
   // ── Human gesture — full-screen pan controls right paddle
   const panGesture = Gesture.Pan()
     .minDistance(0)
-    .onBegin((e: GestureUpdateEvent<PanGestureHandlerEventPayload>) => {
-      const minY = PADDLE_VERTICAL_PADDING;
-      const maxY = courtH.value - PADDLE_HEIGHT - PADDLE_VERTICAL_PADDING;
-      rightPaddleY.value = Math.max(minY, Math.min(maxY, e.y - PADDLE_HEIGHT / 2));
+    .onBegin(() => {
+      // Record paddle position at touch start — no snapping
+      paddleDragStart.value = rightPaddleY.value;
     })
     .onUpdate((e: GestureUpdateEvent<PanGestureHandlerEventPayload>) => {
       const minY = PADDLE_VERTICAL_PADDING;
       const maxY = courtH.value - PADDLE_HEIGHT - PADDLE_VERTICAL_PADDING;
-      rightPaddleY.value = Math.max(minY, Math.min(maxY, e.y - PADDLE_HEIGHT / 2));
+      rightPaddleY.value = Math.max(minY, Math.min(maxY, paddleDragStart.value + e.translationY));
     });
 
   // ── Play Again
   const playAgain = useCallback(() => {
-    const W = courtW.value;
     const H = courtH.value;
     const lastWinner = winnerRef.current;
     aiScoreSV.value = 0;
@@ -248,24 +268,12 @@ export function GameScreen() {
     leftPaddleY.value = H / 2 - PADDLE_HEIGHT / 2;
     rightPaddleY.value = H / 2 - PADDLE_HEIGHT / 2;
 
-    // Place ball attached to human (right) paddle, frozen
-    if (lastWinner === 'You') {
-      ballAttached.value = true;
-      ballX.value = rightPaddleX.value - BALL_SIZE - 4;
-    } else {
-      ballX.value = leftPaddleX.value + PADDLE_WIDTH + 4;
-    }
-    ballY.value = H / 2 - BALL_SIZE / 2;
-    ballVX.value = 0;
-    ballVY.value = 0;
-
     setAiScore(0);
     setPlayerScore(0);
     if (lastWinner === 'You') {
       setHumanWins((w) => {
         const nextWins = w >= 4 ? 0 : w + 1;
         if (nextWins === 0) {
-          // Stage clear — advance stage and boost speed
           setStage((s) => {
             const nextStage = s + 1;
             stageSpeedBonus.value = 1 + (nextStage - 1) * 0.15;
@@ -277,27 +285,15 @@ export function GameScreen() {
     }
     winnerRef.current = null;
     setWinner(null);
-
     isPlaying.value = true;
-    setTimeout(() => {
-      ballAttached.value = false;
-      if (lastWinner === 'You') {
-        ballVX.value = -INITIAL_BALL_SPEED * stageSpeedBonus.value;
-      } else {
-        ballVX.value = INITIAL_BALL_SPEED * stageSpeedBonus.value;
-      }
-      ballVY.value = INITIAL_BALL_SPEED * stageSpeedBonus.value * 0.3;
-    }, 500);
+    // Winner's paddle gets the ball
+    launchBall(lastWinner === 'You' ? 0 : 1);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startGame = useCallback(() => {
     setGameStarted(true);
     isPlaying.value = true;
-    setTimeout(() => {
-      ballAttached.value = false;
-      ballVX.value = -INITIAL_BALL_SPEED * stageSpeedBonus.value;
-      ballVY.value = INITIAL_BALL_SPEED * stageSpeedBonus.value * 0.3;
-    }, 500);
+    launchBall(0); // cold start: ball on human paddle
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Render
@@ -305,7 +301,6 @@ export function GameScreen() {
     <SafeAreaView style={styles.container}>
       <GestureDetector gesture={panGesture}>
         <View style={[styles.court, { marginHorizontal: courtMarginPct as any, backgroundColor: 'rgb(43,75,53)' }]} onLayout={handleLayout}>
-          <View style={styles.centerLine} />
           <ScoreBoard aiScore={aiScore} playerScore={playerScore} boardOpacity={boardOpacity} />
           <Paddle paddleX={leftPaddleX} paddleY={leftPaddleY} />
           <Paddle paddleX={rightPaddleX} paddleY={rightPaddleY} />
@@ -366,12 +361,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 3,
   },
-  centerLine: {
-    position: 'absolute',
-    left: '50%',
-    top: 0,
-    bottom: 0,
-    width: 2,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-  },
+
 });

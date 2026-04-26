@@ -7,8 +7,8 @@ export const SCREEN_WIDTH = Math.max(dims.width, dims.height);
 export const SCREEN_HEIGHT = Math.min(dims.width, dims.height);
 
 // Paddle geometry
-export const PADDLE_WIDTH = 16;
-export const PADDLE_HEIGHT = 110;
+export const PADDLE_WIDTH = 20;
+export const PADDLE_HEIGHT = 95;
 
 // Ball geometry
 export const BALL_SIZE = 18;
@@ -36,4 +36,4 @@ export const MAX_BALL_SPEED = 14;         // upper ceiling
 export const AI_SPEED = 3.5; // max px per frame the AI paddle can move
 
 // Match rules
-export const WIN_SCORE = 7;
+export const WIN_SCORE = 5;
