@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Pong",
+    "slug": "pong-rn",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "requiresFullScreen": true,
+      "bundleIdentifier": "com.mike008.pongrn"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "statusBar": {
+        "hidden": true
+      },
+      "package": "com.mike008.pongrn"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
