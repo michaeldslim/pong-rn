@@ -3,6 +3,13 @@
   "compilerOptions": {
     "strict": true,
     "jsx": "react-native",
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "allowJs": true
   }
+  ,
+  "exclude": [
+    "node_modules",
+    "**/node_modules/*/tsconfig.json"
+  ]
 }

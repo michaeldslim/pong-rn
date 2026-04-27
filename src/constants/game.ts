@@ -37,3 +37,7 @@ export const AI_SPEED = 3.5; // max px per frame the AI paddle can move
 
 // Match rules
 export const WIN_SCORE = 5;
+
+// Powerup tuning
+export const POWERUP_MAX = 5;
+export const POWERUP_LIFETIME = 6000; // ms

@@ -3,13 +3,15 @@ import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { BALL_SIZE } from '../constants/game';
 import type { BallProps } from '../types';
 
-export function Ball({ ballX, ballY }: BallProps) {
+export function Ball({ ballX, ballY, size }: BallProps) {
   const animStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: ballX.value },
       { translateY: ballY.value },
     ],
   }));
+
+  const s = typeof size === 'number' ? size : (size?.value ?? BALL_SIZE);
 
   return (
     <Animated.View
@@ -18,10 +20,10 @@ export function Ball({ ballX, ballY }: BallProps) {
           position: 'absolute',
           top: 0,
           left: 0,
-          width: BALL_SIZE,
-          height: BALL_SIZE,
+          width: s,
+          height: s,
           backgroundColor: '#FFFFFF',
-          borderRadius: BALL_SIZE / 2,
+          borderRadius: s / 2,
         },
         animStyle,
       ]}

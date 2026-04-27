@@ -14,7 +14,7 @@ import {
   useFrameCallback,
   runOnJS,
 } from 'react-native-reanimated';
-import type { FrameInfo } from 'react-native-reanimated';
+import type { FrameInfo, SharedValue } from 'react-native-reanimated';
 
 import { Ball } from '../components/Ball';
 import { Paddle } from '../components/Paddle';
@@ -31,6 +31,8 @@ import {
   MAX_BALL_SPEED,
   AI_SPEED,
   WIN_SCORE,
+  POWERUP_MAX,
+  POWERUP_LIFETIME,
 } from '../constants/game';
 
 export function GameScreen() {
@@ -58,15 +60,11 @@ export function GameScreen() {
   const playPaddleSound = useCallback(() => {
     paddleSoundRef.current?.replayAsync();
   }, []);
-  // Tracks consecutive human wins (0–4). Each win shrinks court 10%.
-  // At 4 wins (60% width), next human win resets back to 100%.
-  const [humanWins, setHumanWins] = useState(0);
-  const [stage, setStage] = useState(1);
-  // Court width: 100% → 90% → 80% → 70% → 60% → reset
-  const courtMarginPct = `${humanWins * 5}%`;
-  // Display% = how wide the court is (100% → 90% → 80% → 70% → 60%)
-  const boardOpacity = 1 - humanWins * 0.1;
-  // Speed increases 15% per stage
+  // Force court width to 90% (5% horizontal margin each side)
+  const courtMarginPct = '5%';
+  // Board opacity is constant now that court size is fixed
+  const boardOpacity = 1;
+  // Speed bonus (kept static unless changed elsewhere)
   const stageSpeedBonus = useSharedValue(1);
 
   // ── Measured court dimensions
@@ -78,13 +76,39 @@ export function GameScreen() {
   const rightPaddleX = useSharedValue(0); // set in onLayout
 
   // ── Game objects
-  const ballX = useSharedValue(0);
-  const ballY = useSharedValue(0);
-  const ballVX = useSharedValue(INITIAL_BALL_SPEED);
-  const ballVY = useSharedValue(INITIAL_BALL_SPEED * 0.3);
+  // Support multiple balls via a mutable ref array of shared values
+  type BallEntry = {
+    x: SharedValue<number>;
+    y: SharedValue<number>;
+    vx: SharedValue<number>;
+    vy: SharedValue<number>;
+    size?: SharedValue<number>;
+    used?: boolean;
+  };
+  const ballsRef = useRef<BallEntry[]>([]);
+  // Primary ball shared values (created at component init)
+  const primaryBX = useSharedValue(0);
+  const primaryBY = useSharedValue(0);
+  const primaryBVX = useSharedValue(0);
+  const primaryBVY = useSharedValue(0);
+  const primaryBSIZE = useSharedValue(BALL_SIZE);
 
   const leftPaddleY = useSharedValue(0);
   const rightPaddleY = useSharedValue(0);
+  const leftPaddleHeight = useSharedValue(PADDLE_HEIGHT);
+  const rightPaddleHeight = useSharedValue(PADDLE_HEIGHT);
+
+  // Preallocate a small pool of extra balls to avoid calling hooks in callbacks
+  const extraBallPool = useRef<BallEntry[]>(
+    new Array(6).fill(null).map(() => ({
+      x: useSharedValue(0) as SharedValue<number>,
+      y: useSharedValue(0) as SharedValue<number>,
+      vx: useSharedValue(0) as SharedValue<number>,
+      vy: useSharedValue(0) as SharedValue<number>,
+      size: useSharedValue(BALL_SIZE) as SharedValue<number>,
+      used: false,
+    }))
+  );
 
   const aiScoreSV = useSharedValue(0);
   const playerScoreSV = useSharedValue(0);
@@ -92,6 +116,43 @@ export function GameScreen() {
   const ballAttached = useSharedValue(false);
   // 0 = attach to right (human) paddle, 1 = attach to left (AI) paddle
   const ballAttachSide = useSharedValue(0);
+
+  // Powerups state (JS thread) — simple pickups that apply temporary effects
+  const [powerups, setPowerups] = useState<Array<{ id: number; x: number; y: number; type: 'multi' | 'grow' | 'shrink'; createdAt: number }>>([]);
+  const powerupId = useRef(1);
+
+  // Spawn powerups periodically while playing
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!isPlaying.value) return;
+      const W = courtW.value || 300;
+      const H = courtH.value || 200;
+      const x = Math.random() * (W * 0.6) + W * 0.2;
+      const y = Math.random() * (H * 0.6) + H * 0.2;
+      const r = Math.random();
+      const type: 'multi' | 'grow' | 'shrink' = r < 0.5 ? 'multi' : r < 0.8 ? 'grow' : 'shrink';
+      const id = powerupId.current++;
+      const now = Date.now();
+      setPowerups((p) => {
+        // enforce concurrent cap
+        if (p.length >= POWERUP_MAX) return p;
+        return [...p, { id, x, y, type, createdAt: now }];
+      });
+    }, 8000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Prune expired powerups every second
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now();
+      setPowerups((p) => p.filter((pu) => now - pu.createdAt < POWERUP_LIFETIME));
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Gentle vertical movement for powerups
+  // (no vertical movement for powerups)
 
   // ── Layout measurement
   const handleLayout = useCallback(
@@ -108,12 +169,13 @@ export function GameScreen() {
       leftPaddleY.value = py;
       rightPaddleY.value = py;
 
-      // Ball sticks to right paddle on cold start
-      ballAttached.value = true;
-      ballX.value = width - PADDLE_MARGIN - PADDLE_WIDTH - BALL_SIZE - 4;
-      ballY.value = py + PADDLE_HEIGHT / 2 - BALL_SIZE / 2;
-      ballVX.value = 0;
-      ballVY.value = 0;
+      // Initialize primary ball: sticks to right paddle on cold start
+      primaryBX.value = width - PADDLE_MARGIN - PADDLE_WIDTH - BALL_SIZE - 4;
+      primaryBY.value = py + PADDLE_HEIGHT / 2 - BALL_SIZE / 2;
+      primaryBVX.value = 0;
+      primaryBVY.value = 0;
+      primaryBSIZE.value = BALL_SIZE;
+      ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
       // Don't auto-start — wait for Start Game button
     },
     [] // eslint-disable-line react-hooks/exhaustive-deps
@@ -124,15 +186,87 @@ export function GameScreen() {
   const launchBall = useCallback((side: 0 | 1) => {
     ballAttachSide.value = side;
     ballAttached.value = true;
-    ballVX.value = 0;
-    ballVY.value = 0;
+    // attach primary ball (index 0)
+    const b = ballsRef.current[0];
+    if (!b) return;
+    b.vx.value = 0;
+    b.vy.value = 0;
     setTimeout(() => {
       ballAttached.value = false;
       const spd = INITIAL_BALL_SPEED * stageSpeedBonus.value;
-      ballVX.value = side === 0 ? -spd : spd;
-      ballVY.value = spd * 0.3;
+      b.vx.value = side === 0 ? -spd : spd;
+      b.vy.value = spd * 0.3;
     }, 500);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Spawn an extra ball at JS time (adds shared values)
+  const spawnBall = useCallback((x: number, y: number, vx: number, vy: number, size = BALL_SIZE) => {
+    // Reuse an entry from the extra ball pool
+    const pool = extraBallPool.current;
+    const slot = pool.find((p) => !p.used);
+    if (slot) {
+      slot.used = true;
+      slot.x.value = x;
+      slot.y.value = y;
+      slot.vx.value = vx;
+      slot.vy.value = vy;
+      slot.size!.value = size;
+      // push a fresh object referencing the shared values (avoid pushing pool object itself)
+      ballsRef.current.push({ x: slot.x, y: slot.y, vx: slot.vx, vy: slot.vy, size: slot.size });
+    }
+  }, []);
+
+  const removePowerup = useCallback((id: number) => {
+    setPowerups((p) => p.filter((pu) => pu.id !== id));
+  }, []);
+
+  const applyPowerup = useCallback((pu: { id: number; x: number; y: number; type: 'multi' | 'grow' | 'shrink' }, collector: 'AI' | 'You') => {
+    if (pu.type === 'multi') {
+      // spawn an extra ball near the pickup with random velocity
+      const vx = (Math.random() > 0.5 ? 1 : -1) * INITIAL_BALL_SPEED * 0.8;
+      const vy = (Math.random() - 0.5) * INITIAL_BALL_SPEED * 0.6;
+      spawnBall(pu.x, pu.y, vx, vy, BALL_SIZE);
+    } else if (pu.type === 'grow') {
+      // temporarily grow collector's paddle
+      if (collector === 'You') {
+        rightPaddleHeight.value = PADDLE_HEIGHT * 1.5;
+        setTimeout(() => {
+          rightPaddleHeight.value = PADDLE_HEIGHT;
+        }, 5000);
+      } else {
+        leftPaddleHeight.value = PADDLE_HEIGHT * 1.5;
+        setTimeout(() => {
+          leftPaddleHeight.value = PADDLE_HEIGHT;
+        }, 5000);
+      }
+    } else if (pu.type === 'shrink') {
+      if (collector === 'You') {
+        rightPaddleHeight.value = PADDLE_HEIGHT * 0.6;
+        setTimeout(() => {
+          rightPaddleHeight.value = PADDLE_HEIGHT;
+        }, 5000);
+      } else {
+        leftPaddleHeight.value = PADDLE_HEIGHT * 0.6;
+        setTimeout(() => {
+          leftPaddleHeight.value = PADDLE_HEIGHT;
+        }, 5000);
+      }
+    }
+    // remove the powerup from the board
+    removePowerup(pu.id);
+  }, []);
+
+  const checkPowerups = useCallback((ballCenterX: number, ballCenterY: number, ballIndex: number, courtWidth: number) => {
+    for (const pu of powerups) {
+      const dx = pu.x - ballCenterX;
+      const dy = pu.y - ballCenterY;
+      if (dx * dx + dy * dy < 32 * 32) {
+        const collector: 'AI' | 'You' = ballCenterX < courtWidth / 2 ? 'AI' : 'You';
+        applyPowerup(pu, collector);
+        break;
+      }
+    }
+  }, [powerups, applyPowerup]);
 
   // ── Game loop (UI thread)
   useFrameCallback((frameInfo: FrameInfo) => {
@@ -147,99 +281,126 @@ export function GameScreen() {
         ? Math.min(frameInfo.timeSincePreviousFrame / 16.67, 2)
         : 1;
 
-    // ── Ball attached to a paddle (freeze phase)
-    if (ballAttached.value) {
-      if (ballAttachSide.value === 0) {
-        // right (human) paddle
-        ballX.value = rightPaddleX.value - BALL_SIZE - 4;
-        ballY.value = rightPaddleY.value + PADDLE_HEIGHT / 2 - BALL_SIZE / 2;
-      } else {
-        // left (AI) paddle
-        ballX.value = leftPaddleX.value + PADDLE_WIDTH + 4;
-        ballY.value = leftPaddleY.value + PADDLE_HEIGHT / 2 - BALL_SIZE / 2;
-      }
-      return;
-    }
-
-    // ── Move ball
-    ballX.value += ballVX.value * dt;
-    ballY.value += ballVY.value * dt;
-
-    // ── Top / bottom wall bounce (uses measured height)
-    if (ballY.value <= 0) {
-      ballY.value = 0;
-      ballVY.value = Math.abs(ballVY.value);
-    } else if (ballY.value + BALL_SIZE >= H) {
-      ballY.value = H - BALL_SIZE;
-      ballVY.value = -Math.abs(ballVY.value);
-    }
-
     // ── Paddle clamp bounds (computed from measured height)
     const minY = PADDLE_VERTICAL_PADDING;
-    const maxY = H - PADDLE_HEIGHT - PADDLE_VERTICAL_PADDING;
+    const maxLeftY = H - leftPaddleHeight.value - PADDLE_VERTICAL_PADDING;
+    const maxRightY = H - rightPaddleHeight.value - PADDLE_VERTICAL_PADDING;
 
-    // ── AI paddle tracking (left)
-    const ballCenterY = ballY.value + BALL_SIZE / 2;
-    const aiDiff = ballCenterY - (leftPaddleY.value + PADDLE_HEIGHT / 2);
-    const aiStep = Math.sign(aiDiff) * Math.min(Math.abs(aiDiff), AI_SPEED * dt);
-    leftPaddleY.value = Math.max(minY, Math.min(maxY, leftPaddleY.value + aiStep));
+    // ── For each ball: handle attach state, movement, walls, paddle collisions, scoring
+    for (let i = 0; i < ballsRef.current.length; i++) {
+      const b = ballsRef.current[i];
+      if (!b) continue;
 
-    // ── Left paddle collision
-    if (
-      ballVX.value < 0 &&
-      ballX.value <= leftPaddleX.value + PADDLE_WIDTH &&
-      ballX.value + BALL_SIZE > leftPaddleX.value &&
-      ballY.value + BALL_SIZE > leftPaddleY.value &&
-      ballY.value < leftPaddleY.value + PADDLE_HEIGHT
-    ) {
-      const relHit =
-        (ballCenterY - (leftPaddleY.value + PADDLE_HEIGHT / 2)) / (PADDLE_HEIGHT / 2);
-      const speed = Math.min(Math.abs(ballVX.value) + BALL_SPEED_INCREMENT, MAX_BALL_SPEED);
-      ballVX.value = speed;
-      ballVY.value = relHit * speed * 0.8;
-      ballX.value = leftPaddleX.value + PADDLE_WIDTH + 1;
-      runOnJS(playPaddleSound)();
-    }
-
-    // ── Right paddle collision
-    if (
-      ballVX.value > 0 &&
-      ballX.value + BALL_SIZE >= rightPaddleX.value &&
-      ballX.value < rightPaddleX.value + PADDLE_WIDTH &&
-      ballY.value + BALL_SIZE > rightPaddleY.value &&
-      ballY.value < rightPaddleY.value + PADDLE_HEIGHT
-    ) {
-      const relHit =
-        (ballCenterY - (rightPaddleY.value + PADDLE_HEIGHT / 2)) / (PADDLE_HEIGHT / 2);
-      const speed = Math.min(Math.abs(ballVX.value) + BALL_SPEED_INCREMENT, MAX_BALL_SPEED);
-      ballVX.value = -speed;
-      ballVY.value = relHit * speed * 0.8;
-      ballX.value = rightPaddleX.value - BALL_SIZE - 1;
-      runOnJS(playPaddleSound)();
-    }
-
-    // ── Scoring
-    if (ballX.value + BALL_SIZE < 0) {
-      ballAttached.value = true; // guard: stop ball immediately on native thread
-      const next = playerScoreSV.value + 1;
-      playerScoreSV.value = next;
-      runOnJS(setPlayerScore)(next);
-      if (next >= WIN_SCORE) {
-        isPlaying.value = false;
-        runOnJS(recordWinner)('You');
-      } else {
-        runOnJS(launchBall)(0); // human scored → ball to human paddle
+      // attached behavior: primary ball attaches to paddle
+      if (ballAttached.value && i === 0) {
+        if (ballAttachSide.value === 0) {
+          b.x.value = rightPaddleX.value - b.size!.value - 4;
+          b.y.value = rightPaddleY.value + rightPaddleHeight.value / 2 - b.size!.value / 2;
+        } else {
+          b.x.value = leftPaddleX.value + PADDLE_WIDTH + 4;
+          b.y.value = leftPaddleY.value + leftPaddleHeight.value / 2 - b.size!.value / 2;
+        }
+        continue;
       }
-    } else if (ballX.value > W) {
-      ballAttached.value = true; // guard: stop ball immediately on native thread
-      const next = aiScoreSV.value + 1;
-      aiScoreSV.value = next;
-      runOnJS(setAiScore)(next);
-      if (next >= WIN_SCORE) {
-        isPlaying.value = false;
-        runOnJS(recordWinner)('AI');
-      } else {
-        runOnJS(launchBall)(1); // AI scored → ball to AI paddle
+
+      // Slow/fast zones: center of court is slower, edges normal
+      const centerStart = W * 0.35;
+      const centerEnd = W * 0.65;
+      const bxCenter = b.x.value + b.size!.value / 2;
+      const zoneMult = bxCenter > centerStart && bxCenter < centerEnd ? 0.75 : 1.0;
+      // Move ball (apply zone multiplier)
+      b.x.value += b.vx.value * dt * zoneMult;
+      b.y.value += b.vy.value * dt * zoneMult;
+
+      // Top / bottom bounce
+      if (b.y.value <= 0) {
+        b.y.value = 0;
+        b.vy.value = Math.abs(b.vy.value);
+      } else if (b.y.value + b.size!.value >= H) {
+        b.y.value = H - b.size!.value;
+        b.vy.value = -Math.abs(b.vy.value);
+      }
+
+      // AI paddle tracking (left) uses ball 0 as target
+      if (i === 0) {
+        const ballCenterY = b.y.value + b.size!.value / 2;
+        const aiDiff = ballCenterY - (leftPaddleY.value + leftPaddleHeight.value / 2);
+        const aiStep = Math.sign(aiDiff) * Math.min(Math.abs(aiDiff), AI_SPEED * dt);
+        leftPaddleY.value = Math.max(minY, Math.min(maxLeftY, leftPaddleY.value + aiStep));
+      }
+
+      const ballCenterY = b.y.value + b.size!.value / 2;
+      const ballCenterX = b.x.value + b.size!.value / 2;
+      // Check powerup pickup on JS thread (pass ball index and court width)
+      runOnJS(checkPowerups)(ballCenterX, ballCenterY, i, W);
+
+      // Left paddle collision
+      if (
+        b.vx.value < 0 &&
+        b.x.value <= leftPaddleX.value + PADDLE_WIDTH &&
+        b.x.value + b.size!.value > leftPaddleX.value &&
+        b.y.value + b.size!.value > leftPaddleY.value &&
+        b.y.value < leftPaddleY.value + leftPaddleHeight.value
+      ) {
+        const relHit = (ballCenterY - (leftPaddleY.value + leftPaddleHeight.value / 2)) / (leftPaddleHeight.value / 2);
+        const speed = Math.min(Math.abs(b.vx.value) + BALL_SPEED_INCREMENT, MAX_BALL_SPEED);
+        b.vx.value = speed;
+        b.vy.value = relHit * speed * 0.8;
+        b.x.value = leftPaddleX.value + PADDLE_WIDTH + 1;
+        runOnJS(playPaddleSound)();
+      }
+
+      // Right paddle collision
+      if (
+        b.vx.value > 0 &&
+        b.x.value + b.size!.value >= rightPaddleX.value &&
+        b.x.value < rightPaddleX.value + PADDLE_WIDTH &&
+        b.y.value + b.size!.value > rightPaddleY.value &&
+        b.y.value < rightPaddleY.value + rightPaddleHeight.value
+      ) {
+        const relHit = (ballCenterY - (rightPaddleY.value + rightPaddleHeight.value / 2)) / (rightPaddleHeight.value / 2);
+        const speed = Math.min(Math.abs(b.vx.value) + BALL_SPEED_INCREMENT, MAX_BALL_SPEED);
+        b.vx.value = -speed;
+        b.vy.value = relHit * speed * 0.8;
+        b.x.value = rightPaddleX.value - b.size!.value - 1;
+        runOnJS(playPaddleSound)();
+      }
+
+      // Scoring: if ball leaves left or right, remove it and update score
+      if (b.x.value + b.size!.value < 0) {
+        // left exit → player scores
+        // if this ball came from the pool, mark it unused
+        // find pool entry by matching shared value references
+        const poolIdx = extraBallPool.current.findIndex((p) => p.x === b.x && p.y === b.y);
+        if (poolIdx >= 0) extraBallPool.current[poolIdx].used = false;
+        ballsRef.current.splice(i, 1);
+        const next = playerScoreSV.value + 1;
+        playerScoreSV.value = next;
+        runOnJS(setPlayerScore)(next);
+        if (next >= WIN_SCORE) {
+          isPlaying.value = false;
+          runOnJS(recordWinner)('You');
+        } else if (ballsRef.current.length === 0) {
+          runOnJS(launchBall)(0);
+        }
+        i--;
+        continue;
+      } else if (b.x.value > W) {
+        // right exit → AI scores
+        const poolIdx = extraBallPool.current.findIndex((p) => p.x === b.x && p.y === b.y);
+        if (poolIdx >= 0) extraBallPool.current[poolIdx].used = false;
+        ballsRef.current.splice(i, 1);
+        const next = aiScoreSV.value + 1;
+        aiScoreSV.value = next;
+        runOnJS(setAiScore)(next);
+        if (next >= WIN_SCORE) {
+          isPlaying.value = false;
+          runOnJS(recordWinner)('AI');
+        } else if (ballsRef.current.length === 0) {
+          runOnJS(launchBall)(1);
+        }
+        i--;
+        continue;
       }
     }
   });
@@ -255,7 +416,7 @@ export function GameScreen() {
     })
     .onUpdate((e: GestureUpdateEvent<PanGestureHandlerEventPayload>) => {
       const minY = PADDLE_VERTICAL_PADDING;
-      const maxY = courtH.value - PADDLE_HEIGHT - PADDLE_VERTICAL_PADDING;
+      const maxY = courtH.value - rightPaddleHeight.value - PADDLE_VERTICAL_PADDING;
       rightPaddleY.value = Math.max(minY, Math.min(maxY, paddleDragStart.value + e.translationY));
     });
 
@@ -267,24 +428,22 @@ export function GameScreen() {
     playerScoreSV.value = 0;
     leftPaddleY.value = H / 2 - PADDLE_HEIGHT / 2;
     rightPaddleY.value = H / 2 - PADDLE_HEIGHT / 2;
+    // reset paddle sizes
+    leftPaddleHeight.value = PADDLE_HEIGHT;
+    rightPaddleHeight.value = PADDLE_HEIGHT;
 
     setAiScore(0);
     setPlayerScore(0);
-    if (lastWinner === 'You') {
-      setHumanWins((w) => {
-        const nextWins = w >= 4 ? 0 : w + 1;
-        if (nextWins === 0) {
-          setStage((s) => {
-            const nextStage = s + 1;
-            stageSpeedBonus.value = 1 + (nextStage - 1) * 0.15;
-            return nextStage;
-          });
-        }
-        return nextWins;
-      });
-    }
     winnerRef.current = null;
     setWinner(null);
+    // reset extra balls pool
+    extraBallPool.current.forEach((p) => { p.used = false; p.x.value = 0; p.y.value = 0; p.vx.value = 0; p.vy.value = 0; });
+    // reset primary ball and ballsRef
+    primaryBX.value = courtW.value - PADDLE_MARGIN - PADDLE_WIDTH - BALL_SIZE - 4;
+    primaryBY.value = H / 2 - BALL_SIZE / 2;
+    primaryBVX.value = 0;
+    primaryBVY.value = 0;
+    ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
     isPlaying.value = true;
     // Winner's paddle gets the ball
     launchBall(lastWinner === 'You' ? 0 : 1);
@@ -292,6 +451,13 @@ export function GameScreen() {
 
   const startGame = useCallback(() => {
     setGameStarted(true);
+    // reset pool and primary ball
+    extraBallPool.current.forEach((p) => { p.used = false; p.x.value = 0; p.y.value = 0; p.vx.value = 0; p.vy.value = 0; });
+    primaryBX.value = courtW.value - PADDLE_MARGIN - PADDLE_WIDTH - BALL_SIZE - 4;
+    primaryBY.value = courtH.value / 2 - BALL_SIZE / 2;
+    primaryBVX.value = 0;
+    primaryBVY.value = 0;
+    ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
     isPlaying.value = true;
     launchBall(0); // cold start: ball on human paddle
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -302,9 +468,27 @@ export function GameScreen() {
       <GestureDetector gesture={panGesture}>
         <View style={[styles.court, { marginHorizontal: courtMarginPct as any, backgroundColor: 'rgb(43,75,53)' }]} onLayout={handleLayout}>
           <ScoreBoard aiScore={aiScore} playerScore={playerScore} boardOpacity={boardOpacity} />
-          <Paddle paddleX={leftPaddleX} paddleY={leftPaddleY} />
-          <Paddle paddleX={rightPaddleX} paddleY={rightPaddleY} />
-          <Ball ballX={ballX} ballY={ballY} />
+          <Paddle paddleX={leftPaddleX} paddleY={leftPaddleY} paddleHeight={leftPaddleHeight} />
+          <Paddle paddleX={rightPaddleX} paddleY={rightPaddleY} paddleHeight={rightPaddleHeight} />
+          {ballsRef.current.map((b, idx) => (
+            <Ball key={idx} ballX={b.x} ballY={b.y} size={b.size} />
+          ))}
+          {powerups.map((pu) => (
+            <View
+              key={pu.id}
+              style={{
+                position: 'absolute',
+                left: pu.x - 12,
+                top: pu.y - 12,
+                width: 24,
+                height: 24,
+                borderRadius: 12,
+                backgroundColor: pu.type === 'multi' ? '#FFD700' : pu.type === 'grow' ? '#00FFAA' : '#FF3366',
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            />
+          ))}
         </View>
       </GestureDetector>
 
