@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { ScoreBoardProps } from '../types';
 
-export function ScoreBoard({ aiScore, playerScore, boardOpacity }: ScoreBoardProps) {
+export function ScoreBoard({ aiScore, playerScore }: ScoreBoardProps) {
   return (
     <View style={styles.wrapper} pointerEvents="none">
       <View style={styles.scoreRow}>
@@ -11,9 +11,6 @@ export function ScoreBoard({ aiScore, playerScore, boardOpacity }: ScoreBoardPro
         <Text style={styles.divider}> : </Text>
         <Text style={styles.score}>{playerScore}</Text>
         <Text style={styles.label}>You</Text>
-      </View>
-      <View style={styles.displayBadgeWrapper}>
-        <Text style={styles.displayBadge}>Display {Math.round(boardOpacity * 100)}%</Text>
       </View>
     </View>
   );
@@ -53,20 +50,5 @@ const styles = StyleSheet.create({
   divider: {
     color: 'rgba(255,255,255,0.25)',
     fontSize: 22,
-  },
-  displayBadgeWrapper: {
-    borderWidth: 1,
-    borderColor: '#FFD700',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  displayBadge: {
-    textAlign: 'center',
-    color: '#FFD700',
-    fontSize: 8,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
   },
 });

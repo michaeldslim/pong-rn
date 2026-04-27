@@ -114,11 +114,13 @@ export function GameScreen() {
   const playerScoreSV = useSharedValue(0);
   const isPlaying = useSharedValue(false);
   const ballAttached = useSharedValue(false);
+  const [, setBallsVersion] = useState(0);
+  const bumpBalls = useCallback(() => setBallsVersion((v) => v + 1), []);
   // 0 = attach to right (human) paddle, 1 = attach to left (AI) paddle
   const ballAttachSide = useSharedValue(0);
 
   // Powerups state (JS thread) — simple pickups that apply temporary effects
-  const [powerups, setPowerups] = useState<Array<{ id: number; x: number; y: number; type: 'multi' | 'grow' | 'shrink'; createdAt: number }>>([]);
+  const [powerups, setPowerups] = useState<Array<{ id: number; x: number; y: number; type: 'grow' | 'shrink'; createdAt: number }>>([]);
   const powerupId = useRef(1);
 
   // Spawn powerups periodically while playing
@@ -130,7 +132,7 @@ export function GameScreen() {
       const x = Math.random() * (W * 0.6) + W * 0.2;
       const y = Math.random() * (H * 0.6) + H * 0.2;
       const r = Math.random();
-      const type: 'multi' | 'grow' | 'shrink' = r < 0.5 ? 'multi' : r < 0.8 ? 'grow' : 'shrink';
+      const type: 'grow' | 'shrink' = r < 0.6 ? 'grow' : 'shrink';
       const id = powerupId.current++;
       const now = Date.now();
       setPowerups((p) => {
@@ -193,9 +195,12 @@ export function GameScreen() {
     b.vy.value = 0;
     setTimeout(() => {
       ballAttached.value = false;
-      const spd = INITIAL_BALL_SPEED * stageSpeedBonus.value;
+      // start slightly faster so the initial serve feels snappy
+      const spd = INITIAL_BALL_SPEED * stageSpeedBonus.value * 1.4;
+      // randomize vertical angle so serves don't always head downwards
+      const vy = (Math.random() * 2 - 1) * spd * 0.45; // range ≈ [-0.45*spd, 0.45*spd]
       b.vx.value = side === 0 ? -spd : spd;
-      b.vy.value = spd * 0.3;
+      b.vy.value = vy;
     }, 500);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -203,7 +208,11 @@ export function GameScreen() {
   const spawnBall = useCallback((x: number, y: number, vx: number, vy: number, size = BALL_SIZE) => {
     // Reuse an entry from the extra ball pool
     const pool = extraBallPool.current;
-    const slot = pool.find((p) => !p.used);
+    let slot = pool.find((p) => !p.used);
+    if (!slot) {
+      // fallback: reuse the first slot if pool exhausted
+      slot = pool[0];
+    }
     if (slot) {
       slot.used = true;
       slot.x.value = x;
@@ -213,6 +222,8 @@ export function GameScreen() {
       slot.size!.value = size;
       // push a fresh object referencing the shared values (avoid pushing pool object itself)
       ballsRef.current.push({ x: slot.x, y: slot.y, vx: slot.vx, vy: slot.vy, size: slot.size });
+      // ensure React re-renders so the new Ball component is mounted
+      bumpBalls();
     }
   }, []);
 
@@ -220,13 +231,8 @@ export function GameScreen() {
     setPowerups((p) => p.filter((pu) => pu.id !== id));
   }, []);
 
-  const applyPowerup = useCallback((pu: { id: number; x: number; y: number; type: 'multi' | 'grow' | 'shrink' }, collector: 'AI' | 'You') => {
-    if (pu.type === 'multi') {
-      // spawn an extra ball near the pickup with random velocity
-      const vx = (Math.random() > 0.5 ? 1 : -1) * INITIAL_BALL_SPEED * 0.8;
-      const vy = (Math.random() - 0.5) * INITIAL_BALL_SPEED * 0.6;
-      spawnBall(pu.x, pu.y, vx, vy, BALL_SIZE);
-    } else if (pu.type === 'grow') {
+  const applyPowerup = useCallback((pu: { id: number; x: number; y: number; type: 'grow' | 'shrink' }, collector: 'AI' | 'You') => {
+    if (pu.type === 'grow') {
       // temporarily grow collector's paddle
       if (collector === 'You') {
         rightPaddleHeight.value = PADDLE_HEIGHT * 1.5;
@@ -262,7 +268,16 @@ export function GameScreen() {
       const dy = pu.y - ballCenterY;
       if (dx * dx + dy * dy < 32 * 32) {
         const collector: 'AI' | 'You' = ballCenterX < courtWidth / 2 ? 'AI' : 'You';
-        applyPowerup(pu, collector);
+        // clone before passing into handlers to avoid accidental mutation of
+        // potentially frozen state objects (some dev setups freeze state)
+        try {
+          applyPowerup({ ...pu }, collector);
+        } catch (err) {
+          // ensure the pickup is removed even if handler fails
+          // eslint-disable-next-line no-console
+          console.warn('applyPowerup failed, removing powerup', err);
+          removePowerup(pu.id);
+        }
         break;
       }
     }
@@ -374,6 +389,7 @@ export function GameScreen() {
         const poolIdx = extraBallPool.current.findIndex((p) => p.x === b.x && p.y === b.y);
         if (poolIdx >= 0) extraBallPool.current[poolIdx].used = false;
         ballsRef.current.splice(i, 1);
+          runOnJS(bumpBalls)();
         const next = playerScoreSV.value + 1;
         playerScoreSV.value = next;
         runOnJS(setPlayerScore)(next);
@@ -390,6 +406,7 @@ export function GameScreen() {
         const poolIdx = extraBallPool.current.findIndex((p) => p.x === b.x && p.y === b.y);
         if (poolIdx >= 0) extraBallPool.current[poolIdx].used = false;
         ballsRef.current.splice(i, 1);
+          runOnJS(bumpBalls)();
         const next = aiScoreSV.value + 1;
         aiScoreSV.value = next;
         runOnJS(setAiScore)(next);
@@ -445,6 +462,7 @@ export function GameScreen() {
     primaryBVY.value = 0;
     ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
     isPlaying.value = true;
+    bumpBalls();
     // Winner's paddle gets the ball
     launchBall(lastWinner === 'You' ? 0 : 1);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -459,6 +477,7 @@ export function GameScreen() {
     primaryBVY.value = 0;
     ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
     isPlaying.value = true;
+    bumpBalls();
     launchBall(0); // cold start: ball on human paddle
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -473,22 +492,35 @@ export function GameScreen() {
           {ballsRef.current.map((b, idx) => (
             <Ball key={idx} ballX={b.x} ballY={b.y} size={b.size} />
           ))}
-          {powerups.map((pu) => (
-            <View
-              key={pu.id}
-              style={{
-                position: 'absolute',
-                left: pu.x - 12,
-                top: pu.y - 12,
-                width: 24,
-                height: 24,
-                borderRadius: 12,
-                backgroundColor: pu.type === 'multi' ? '#FFD700' : pu.type === 'grow' ? '#00FFAA' : '#FF3366',
-                justifyContent: 'center',
-                alignItems: 'center',
-              }}
-            />
-          ))}
+          {powerups.map((pu) => {
+            const bg = pu.type === 'grow' ? '#007AFF' : '#FF3B30';
+            return (
+              <TouchableOpacity
+                key={pu.id}
+                activeOpacity={0.85}
+                onPress={() => {
+                  try {
+                    const collector: 'AI' | 'You' = pu.x < (courtW.value / 2) ? 'AI' : 'You';
+                    applyPowerup({ ...pu }, collector);
+                  } catch (err) {
+                    console.warn('applyPowerup onPress failed', err);
+                    removePowerup(pu.id);
+                  }
+                }}
+                style={{
+                  position: 'absolute',
+                  left: pu.x - 16,
+                  top: pu.y - 16,
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: bg,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              />
+            );
+          })}
         </View>
       </GestureDetector>
 
@@ -545,5 +577,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 3,
   },
+  
 
 });
