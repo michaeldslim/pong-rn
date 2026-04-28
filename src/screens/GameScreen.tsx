@@ -114,6 +114,7 @@ export function GameScreen() {
   const playerScoreSV = useSharedValue(0);
   const isPlaying = useSharedValue(false);
   const ballAttached = useSharedValue(false);
+  const attachCountdown = useSharedValue(0);
   const [, setBallsVersion] = useState(0);
   const bumpBalls = useCallback(() => setBallsVersion((v) => v + 1), []);
   // 0 = attach to right (human) paddle, 1 = attach to left (AI) paddle
@@ -185,22 +186,42 @@ export function GameScreen() {
 
   // ── Unified ball launch: attach to paddle, delay, then release
   // side: 0 = human (right), 1 = AI (left)
-  const launchBall = useCallback((side: 0 | 1) => {
+  const launchBall = useCallback((side: 0 | 1, attach = true) => {
     ballAttachSide.value = side;
-    ballAttached.value = true;
-    // attach primary ball (index 0)
     const b = ballsRef.current[0];
-    if (!b) return;
-    b.vx.value = 0;
-    b.vy.value = 0;
-    setTimeout(() => {
-      ballAttached.value = false;
-      // start slightly faster so the initial serve feels snappy
+    if (!b) {
+      // defensive: no primary ball available
+      // eslint-disable-next-line no-console
+      console.warn('launchBall: no primary ball found');
+      return;
+    }
+    // debug log to help diagnose cold-start-only failures on some devices
+    // eslint-disable-next-line no-console
+    console.log('launchBall', { side, attach, ballsLen: ballsRef.current.length, ballAttached: ballAttached.value });
+    if (!attach) {
+      // immediate launch
       const spd = INITIAL_BALL_SPEED * stageSpeedBonus.value * 1.4;
-      // randomize vertical angle so serves don't always head downwards
-      const vy = (Math.random() * 2 - 1) * spd * 0.45; // range ≈ [-0.45*spd, 0.45*spd]
+      const vy = (Math.random() * 2 - 1) * spd * 0.45;
       b.vx.value = side === 0 ? -spd : spd;
       b.vy.value = vy;
+      ballAttached.value = false;
+      return;
+    }
+    ballAttached.value = true;
+    // attach primary ball (index 0)
+    b.vx.value = 0;
+    b.vy.value = 0;
+    // schedule a UI-thread-safe release using a frame countdown (fallback to JS timer kept)
+    attachCountdown.value = Math.max(1, Math.round(500 / 16.67));
+    setTimeout(() => {
+      // keep JS timeout as a fallback; prefer UI-thread release in the frame loop
+      if (ballAttached.value) {
+        ballAttached.value = false;
+        const spd = INITIAL_BALL_SPEED * stageSpeedBonus.value * 1.4;
+        const vy = (Math.random() * 2 - 1) * spd * 0.45;
+        b.vx.value = side === 0 ? -spd : spd;
+        b.vy.value = vy;
+      }
     }, 500);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -305,6 +326,20 @@ export function GameScreen() {
     for (let i = 0; i < ballsRef.current.length; i++) {
       const b = ballsRef.current[i];
       if (!b) continue;
+
+      // handle UI-thread attach countdown release (fallback for JS timers)
+      if (attachCountdown.value > 0) {
+        attachCountdown.value = Math.max(0, attachCountdown.value - 1);
+        if (attachCountdown.value === 0 && ballAttached.value && i === 0) {
+          // release primary ball on UI thread
+          ballAttached.value = false;
+          const spd = INITIAL_BALL_SPEED * stageSpeedBonus.value * 1.4;
+          const vy = (Math.random() * 2 - 1) * spd * 0.45;
+          b.vx.value = ballAttachSide.value === 0 ? -spd : spd;
+          b.vy.value = vy;
+          // continue; let the movement be handled below
+        }
+      }
 
       // attached behavior: primary ball attaches to paddle
       if (ballAttached.value && i === 0) {
@@ -463,8 +498,10 @@ export function GameScreen() {
     ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
     isPlaying.value = true;
     bumpBalls();
-    // Winner's paddle gets the ball
-    launchBall(lastWinner === 'You' ? 0 : 1);
+    // reset attach state and small delay before launching to avoid races on some devices
+    ballAttached.value = false;
+    attachCountdown.value = 0;
+    setTimeout(() => launchBall(lastWinner === 'You' ? 0 : 1, false), 50);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startGame = useCallback(() => {
@@ -478,7 +515,10 @@ export function GameScreen() {
     ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
     isPlaying.value = true;
     bumpBalls();
-    launchBall(0); // cold start: ball on human paddle
+    // ensure attach state is clear then launch after a tiny delay
+    ballAttached.value = false;
+    attachCountdown.value = 0;
+    setTimeout(() => launchBall(0, false), 50); // cold start: immediate launch from human paddle
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Render
