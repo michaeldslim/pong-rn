@@ -62,10 +62,6 @@ export function GameScreen() {
   }, []);
   // Force court width to 90% (5% horizontal margin each side)
   const courtMarginPct = '5%';
-  // Board opacity is constant now that court size is fixed
-  const boardOpacity = 1;
-  // Speed bonus (kept static unless changed elsewhere)
-  const stageSpeedBonus = useSharedValue(1);
 
   // ── Measured court dimensions
   // Shared values so the game-loop worklet reads them on the UI thread.
@@ -83,7 +79,6 @@ export function GameScreen() {
     vx: SharedValue<number>;
     vy: SharedValue<number>;
     size?: SharedValue<number>;
-    used?: boolean;
   };
   const ballsRef = useRef<BallEntry[]>([]);
   // Primary ball shared values (created at component init)
@@ -97,18 +92,6 @@ export function GameScreen() {
   const rightPaddleY = useSharedValue(0);
   const leftPaddleHeight = useSharedValue(PADDLE_HEIGHT);
   const rightPaddleHeight = useSharedValue(PADDLE_HEIGHT);
-
-  // Preallocate a small pool of extra balls to avoid calling hooks in callbacks
-  const extraBallPool = useRef<BallEntry[]>(
-    new Array(6).fill(null).map(() => ({
-      x: useSharedValue(0) as SharedValue<number>,
-      y: useSharedValue(0) as SharedValue<number>,
-      vx: useSharedValue(0) as SharedValue<number>,
-      vy: useSharedValue(0) as SharedValue<number>,
-      size: useSharedValue(BALL_SIZE) as SharedValue<number>,
-      used: false,
-    }))
-  );
 
   const aiScoreSV = useSharedValue(0);
   const playerScoreSV = useSharedValue(0);
@@ -154,9 +137,6 @@ export function GameScreen() {
     return () => clearInterval(t);
   }, []);
 
-  // Gentle vertical movement for powerups
-  // (no vertical movement for powerups)
-
   // ── Layout measurement
   const handleLayout = useCallback(
     (e: LayoutChangeEvent) => {
@@ -195,12 +175,9 @@ export function GameScreen() {
       console.warn('launchBall: no primary ball found');
       return;
     }
-    // debug log to help diagnose cold-start-only failures on some devices
-    // eslint-disable-next-line no-console
-    console.log('launchBall', { side, attach, ballsLen: ballsRef.current.length, ballAttached: ballAttached.value });
     if (!attach) {
       // immediate launch
-      const spd = INITIAL_BALL_SPEED * stageSpeedBonus.value * 1.4;
+      const spd = INITIAL_BALL_SPEED * 1.4;
       const vy = (Math.random() * 2 - 1) * spd * 0.45;
       b.vx.value = side === 0 ? -spd : spd;
       b.vy.value = vy;
@@ -217,36 +194,13 @@ export function GameScreen() {
       // keep JS timeout as a fallback; prefer UI-thread release in the frame loop
       if (ballAttached.value) {
         ballAttached.value = false;
-        const spd = INITIAL_BALL_SPEED * stageSpeedBonus.value * 1.4;
+        const spd = INITIAL_BALL_SPEED * 1.4;
         const vy = (Math.random() * 2 - 1) * spd * 0.45;
         b.vx.value = side === 0 ? -spd : spd;
         b.vy.value = vy;
       }
     }, 500);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Spawn an extra ball at JS time (adds shared values)
-  const spawnBall = useCallback((x: number, y: number, vx: number, vy: number, size = BALL_SIZE) => {
-    // Reuse an entry from the extra ball pool
-    const pool = extraBallPool.current;
-    let slot = pool.find((p) => !p.used);
-    if (!slot) {
-      // fallback: reuse the first slot if pool exhausted
-      slot = pool[0];
-    }
-    if (slot) {
-      slot.used = true;
-      slot.x.value = x;
-      slot.y.value = y;
-      slot.vx.value = vx;
-      slot.vy.value = vy;
-      slot.size!.value = size;
-      // push a fresh object referencing the shared values (avoid pushing pool object itself)
-      ballsRef.current.push({ x: slot.x, y: slot.y, vx: slot.vx, vy: slot.vy, size: slot.size });
-      // ensure React re-renders so the new Ball component is mounted
-      bumpBalls();
-    }
-  }, []);
 
   const removePowerup = useCallback((id: number) => {
     setPowerups((p) => p.filter((pu) => pu.id !== id));
@@ -283,7 +237,7 @@ export function GameScreen() {
     removePowerup(pu.id);
   }, []);
 
-  const checkPowerups = useCallback((ballCenterX: number, ballCenterY: number, ballIndex: number, courtWidth: number) => {
+  const checkPowerups = useCallback((ballCenterX: number, ballCenterY: number, courtWidth: number) => {
     for (const pu of powerups) {
       const dx = pu.x - ballCenterX;
       const dy = pu.y - ballCenterY;
@@ -320,7 +274,6 @@ export function GameScreen() {
     // ── Paddle clamp bounds (computed from measured height)
     const minY = PADDLE_VERTICAL_PADDING;
     const maxLeftY = H - leftPaddleHeight.value - PADDLE_VERTICAL_PADDING;
-    const maxRightY = H - rightPaddleHeight.value - PADDLE_VERTICAL_PADDING;
 
     // ── For each ball: handle attach state, movement, walls, paddle collisions, scoring
     for (let i = 0; i < ballsRef.current.length; i++) {
@@ -333,7 +286,7 @@ export function GameScreen() {
         if (attachCountdown.value === 0 && ballAttached.value && i === 0) {
           // release primary ball on UI thread
           ballAttached.value = false;
-          const spd = INITIAL_BALL_SPEED * stageSpeedBonus.value * 1.4;
+          const spd = INITIAL_BALL_SPEED * 1.4;
           const vy = (Math.random() * 2 - 1) * spd * 0.45;
           b.vx.value = ballAttachSide.value === 0 ? -spd : spd;
           b.vy.value = vy;
@@ -382,7 +335,7 @@ export function GameScreen() {
       const ballCenterY = b.y.value + b.size!.value / 2;
       const ballCenterX = b.x.value + b.size!.value / 2;
       // Check powerup pickup on JS thread (pass ball index and court width)
-      runOnJS(checkPowerups)(ballCenterX, ballCenterY, i, W);
+      runOnJS(checkPowerups)(ballCenterX, ballCenterY, W);
 
       // Left paddle collision
       if (
@@ -419,10 +372,6 @@ export function GameScreen() {
       // Scoring: if ball leaves left or right, remove it and update score
       if (b.x.value + b.size!.value < 0) {
         // left exit → player scores
-        // if this ball came from the pool, mark it unused
-        // find pool entry by matching shared value references
-        const poolIdx = extraBallPool.current.findIndex((p) => p.x === b.x && p.y === b.y);
-        if (poolIdx >= 0) extraBallPool.current[poolIdx].used = false;
         ballsRef.current.splice(i, 1);
           runOnJS(bumpBalls)();
         const next = playerScoreSV.value + 1;
@@ -438,8 +387,6 @@ export function GameScreen() {
         continue;
       } else if (b.x.value > W) {
         // right exit → AI scores
-        const poolIdx = extraBallPool.current.findIndex((p) => p.x === b.x && p.y === b.y);
-        if (poolIdx >= 0) extraBallPool.current[poolIdx].used = false;
         ballsRef.current.splice(i, 1);
           runOnJS(bumpBalls)();
         const next = aiScoreSV.value + 1;
@@ -488,8 +435,6 @@ export function GameScreen() {
     setPlayerScore(0);
     winnerRef.current = null;
     setWinner(null);
-    // reset extra balls pool
-    extraBallPool.current.forEach((p) => { p.used = false; p.x.value = 0; p.y.value = 0; p.vx.value = 0; p.vy.value = 0; });
     // reset primary ball and ballsRef
     primaryBX.value = courtW.value - PADDLE_MARGIN - PADDLE_WIDTH - BALL_SIZE - 4;
     primaryBY.value = H / 2 - BALL_SIZE / 2;
@@ -506,8 +451,6 @@ export function GameScreen() {
 
   const startGame = useCallback(() => {
     setGameStarted(true);
-    // reset pool and primary ball
-    extraBallPool.current.forEach((p) => { p.used = false; p.x.value = 0; p.y.value = 0; p.vx.value = 0; p.vy.value = 0; });
     primaryBX.value = courtW.value - PADDLE_MARGIN - PADDLE_WIDTH - BALL_SIZE - 4;
     primaryBY.value = courtH.value / 2 - BALL_SIZE / 2;
     primaryBVX.value = 0;
@@ -526,7 +469,7 @@ export function GameScreen() {
     <SafeAreaView style={styles.container}>
       <GestureDetector gesture={panGesture}>
         <View style={[styles.court, { marginHorizontal: courtMarginPct as any, backgroundColor: 'rgb(43,75,53)' }]} onLayout={handleLayout}>
-          <ScoreBoard aiScore={aiScore} playerScore={playerScore} boardOpacity={boardOpacity} />
+          <ScoreBoard aiScore={aiScore} playerScore={playerScore} />
           <Paddle paddleX={leftPaddleX} paddleY={leftPaddleY} paddleHeight={leftPaddleHeight} />
           <Paddle paddleX={rightPaddleX} paddleY={rightPaddleY} paddleHeight={rightPaddleHeight} />
           {ballsRef.current.map((b, idx) => (

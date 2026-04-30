@@ -13,14 +13,11 @@ export interface PaddleProps {
   paddleY: SharedValue<number>;
   /** Optional animated height for temporary growth/shrink effects */
   paddleHeight?: SharedValue<number> | number;
-  /** Optional animated width for paddle (rarely changed) */
-  paddleWidth?: SharedValue<number> | number;
 }
 
 export interface ScoreBoardProps {
   aiScore: number;
   playerScore: number;
-  boardOpacity: number;
 }
 
 export interface WinOverlayProps {

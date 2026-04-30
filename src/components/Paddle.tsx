@@ -3,7 +3,7 @@ import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { PADDLE_WIDTH, PADDLE_HEIGHT } from '../constants/game';
 import type { PaddleProps } from '../types';
 
-export function Paddle({ paddleX, paddleY, paddleHeight, paddleWidth }: PaddleProps) {
+export function Paddle({ paddleX, paddleY, paddleHeight }: PaddleProps) {
   const animStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: paddleX.value },
@@ -12,7 +12,6 @@ export function Paddle({ paddleX, paddleY, paddleHeight, paddleWidth }: PaddlePr
   }));
 
   const height = typeof paddleHeight === 'number' ? paddleHeight : (paddleHeight?.value ?? PADDLE_HEIGHT);
-  const width = typeof paddleWidth === 'number' ? paddleWidth : (paddleWidth?.value ?? PADDLE_WIDTH);
 
   return (
     <Animated.View
@@ -21,7 +20,7 @@ export function Paddle({ paddleX, paddleY, paddleHeight, paddleWidth }: PaddlePr
           position: 'absolute',
           top: 0,
           left: 0,
-          width,
+          width: PADDLE_WIDTH,
           height,
           backgroundColor: '#FFFFFF',
           borderRadius: 6,
