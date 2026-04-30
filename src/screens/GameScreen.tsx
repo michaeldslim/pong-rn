@@ -152,21 +152,25 @@ export function GameScreen() {
       leftPaddleY.value = py;
       rightPaddleY.value = py;
 
-      // Initialize primary ball: sticks to right paddle on cold start
-      primaryBX.value = width - PADDLE_MARGIN - PADDLE_WIDTH - BALL_SIZE - 4;
-      primaryBY.value = py + PADDLE_HEIGHT / 2 - BALL_SIZE / 2;
-      primaryBVX.value = 0;
-      primaryBVY.value = 0;
-      primaryBSIZE.value = BALL_SIZE;
-      ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
-      // Don't auto-start — wait for Start Game button
+      // Only reset ball state when the game is not already running.
+      // On Android, onLayout can re-fire after a state update (e.g. bumpBalls),
+      // which would zero out velocities that launchBall just set — causing the
+      // ball to freeze on every cold start after the first.
+      if (!isPlaying.value) {
+        primaryBX.value = width - PADDLE_MARGIN - PADDLE_WIDTH - BALL_SIZE - 4;
+        primaryBY.value = py + PADDLE_HEIGHT / 2 - BALL_SIZE / 2;
+        primaryBVX.value = 0;
+        primaryBVY.value = 0;
+        primaryBSIZE.value = BALL_SIZE;
+        ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
+      }
     },
     [] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   // ── Unified ball launch: attach to paddle, delay, then release
   // side: 0 = human (right), 1 = AI (left)
-  const launchBall = useCallback((side: 0 | 1, attach = true) => {
+  const launchBall = useCallback((side: 0 | 1, attach = true, attachMs = 500) => {
     ballAttachSide.value = side;
     const b = ballsRef.current[0];
     if (!b) {
@@ -189,7 +193,7 @@ export function GameScreen() {
     b.vx.value = 0;
     b.vy.value = 0;
     // schedule a UI-thread-safe release using a frame countdown (fallback to JS timer kept)
-    attachCountdown.value = Math.max(1, Math.round(500 / 16.67));
+    attachCountdown.value = Math.max(1, Math.round(attachMs / 16.67));
     setTimeout(() => {
       // keep JS timeout as a fallback; prefer UI-thread release in the frame loop
       if (ballAttached.value) {
@@ -199,7 +203,7 @@ export function GameScreen() {
         b.vx.value = side === 0 ? -spd : spd;
         b.vy.value = vy;
       }
-    }, 500);
+    }, attachMs);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const removePowerup = useCallback((id: number) => {
@@ -381,7 +385,7 @@ export function GameScreen() {
           isPlaying.value = false;
           runOnJS(recordWinner)('You');
         } else if (ballsRef.current.length === 0) {
-          runOnJS(launchBall)(0);
+          runOnJS(launchBall)(0, true, 3000);
         }
         i--;
         continue;
@@ -396,7 +400,7 @@ export function GameScreen() {
           isPlaying.value = false;
           runOnJS(recordWinner)('AI');
         } else if (ballsRef.current.length === 0) {
-          runOnJS(launchBall)(1);
+          runOnJS(launchBall)(1, true, 1000);
         }
         i--;
         continue;
@@ -443,10 +447,12 @@ export function GameScreen() {
     ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
     isPlaying.value = true;
     bumpBalls();
-    // reset attach state and small delay before launching to avoid races on some devices
+    // Attach ball to the winner's paddle immediately so it never appears on the
+    // wrong side. Hold for 3 s before releasing — gives both players time to get ready.
     ballAttached.value = false;
     attachCountdown.value = 0;
-    setTimeout(() => launchBall(lastWinner === 'You' ? 0 : 1, false), 50);
+    const launchSide = lastWinner === 'You' ? 0 : 1;
+    launchBall(launchSide, true, 3000);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startGame = useCallback(() => {
@@ -461,7 +467,7 @@ export function GameScreen() {
     // ensure attach state is clear then launch after a tiny delay
     ballAttached.value = false;
     attachCountdown.value = 0;
-    setTimeout(() => launchBall(0, false), 50); // cold start: immediate launch from human paddle
+    launchBall(0, true, 3000); // attach to human paddle for 3 s before releasing
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Render
