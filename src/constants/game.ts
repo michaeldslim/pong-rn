@@ -25,3 +25,6 @@ export const WIN_SCORE = 5;
 // Powerup tuning
 export const POWERUP_MAX = 5;
 export const POWERUP_LIFETIME = 6000; // ms
+
+// Maximum shared-value-backed ball slots (pool size for splitting)
+export const MAX_BALL_SLOTS = 6;
