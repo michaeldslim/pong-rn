@@ -39,12 +39,12 @@ npm install
 
 #### For Android
 ```bash
-npx react-native run-android
+npx expo run:android --device
 ```
 
 #### For iOS
 ```bash
-npx react-native run-ios
+npx expo run:ios --device
 ```
 
 ## Project Structure
