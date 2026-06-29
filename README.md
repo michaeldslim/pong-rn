@@ -47,6 +47,30 @@ npx react-native run-android
 npx react-native run-ios
 ```
 
+## Project Structure
+
+```
+pong-rn/
+├── src/
+│   ├── components/
+│   │   ├── Ball.tsx
+│   │   ├── Paddle.tsx
+│   │   ├── ScoreBoard.tsx
+│   │   └── WinOverlay.tsx
+│   ├── constants/
+│   │   └── game.ts
+│   ├── screens/
+│   │   └── GameScreen.tsx
+│   └── types/
+│       └── index.ts
+├── assets/
+│   ├── paddle_touch.mp3
+│   └── ...
+├── App.tsx
+├── package.json
+└── README.md
+```
+
 ## How to Play
 
 1. Launch the game on your device or emulator
