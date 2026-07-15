@@ -76,7 +76,7 @@ pong-rn/
 1. Launch the game on your device or emulator
 2. Control your paddle by touching and dragging vertically on the screen
 3. Try to return the ball past your opponent's paddle
-4. First player to reach 7 points wins!
+4. First player to reach 5 points wins!
 
 ## Game Components
 

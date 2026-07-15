@@ -1,32 +1,145 @@
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+} from 'react-native-reanimated';
+import { AI_DIFFICULTY_LABELS } from '../constants/game';
+import {
+  HUD_BAR_HEIGHT,
+  HUD_DIVIDER_FONT_SIZE,
+  HUD_LABEL_FONT_SIZE,
+  HUD_PADDING_TOP,
+  HUD_SCORE_FONT_SIZE,
+} from '../constants/hud';
 import type { ScoreBoardProps } from '../types';
 
-export function ScoreBoard({ aiScore, playerScore }: ScoreBoardProps) {
+function AnimatedScore({
+  score,
+  fontSize,
+}: {
+  score: number;
+  fontSize: number;
+}) {
+  const scale = useSharedValue(1);
+
+  useEffect(() => {
+    scale.value = withSequence(
+      withSpring(1.35, { damping: 8, stiffness: 400 }),
+      withSpring(1, { damping: 12, stiffness: 200 }),
+    );
+  }, [score, scale]);
+
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
   return (
-    <View style={styles.wrapper} pointerEvents="none">
-      <View style={styles.scoreRow}>
-        <Text style={styles.label}>AI</Text>
-        <Text style={styles.score}>{aiScore}</Text>
-        <Text style={styles.divider}> : </Text>
-        <Text style={styles.score}>{playerScore}</Text>
-        <Text style={styles.label}>You</Text>
+    <Animated.Text style={[styles.score, { fontSize }, animStyle]}>
+      {score}
+    </Animated.Text>
+  );
+}
+
+export function ScoreBoard({
+  aiScore,
+  playerScore,
+  variant = 'landscape',
+  fontScale = 1,
+  isPaused = false,
+  onTogglePause,
+  difficulty = 'medium',
+}: ScoreBoardProps) {
+  const labelSize = HUD_LABEL_FONT_SIZE * fontScale;
+  const scoreSize = HUD_SCORE_FONT_SIZE * fontScale;
+  const dividerSize = HUD_DIVIDER_FONT_SIZE * fontScale;
+  const pauseLabel = isPaused ? '▶' : '❚❚';
+
+  const scoreRow = (
+    <View style={styles.scoreRow}>
+      <Text style={[styles.label, { fontSize: labelSize }]}>AI</Text>
+      <AnimatedScore score={aiScore} fontSize={scoreSize} />
+      <Text style={[styles.divider, { fontSize: dividerSize }]}> : </Text>
+      <AnimatedScore score={playerScore} fontSize={scoreSize} />
+      <Text style={[styles.label, { fontSize: labelSize }]}>You</Text>
+    </View>
+  );
+
+  const pauseButton = onTogglePause ? (
+    <TouchableOpacity
+      style={[
+        styles.pauseButton,
+        variant === 'landscape' ? styles.pauseButtonLandscape : styles.pauseButtonPortrait,
+      ]}
+      onPress={onTogglePause}
+      activeOpacity={0.75}
+      accessibilityRole="button"
+      accessibilityLabel={isPaused ? 'Resume game' : 'Pause game'}
+    >
+      <Text style={styles.pauseText}>{pauseLabel}</Text>
+    </TouchableOpacity>
+  ) : null;
+
+  const difficultyBadge = (
+    <View
+      style={[
+        styles.difficultyBadge,
+        variant === 'landscape' ? styles.difficultyBadgeLandscape : styles.difficultyBadgePortrait,
+      ]}
+      pointerEvents="none"
+    >
+      <Text style={styles.difficultyText}>{AI_DIFFICULTY_LABELS[difficulty]}</Text>
+    </View>
+  );
+
+  if (variant === 'portrait') {
+    return (
+      <View style={styles.portraitBar}>
+        {difficultyBadge}
+        <View style={styles.centeredScore} pointerEvents="none">
+          {scoreRow}
+        </View>
+        {pauseButton}
       </View>
+    );
+  }
+
+  return (
+    <View style={styles.landscapeWrapper}>
+      {difficultyBadge}
+      {scoreRow}
+      {pauseButton}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrapper: {
+  landscapeWrapper: {
     position: 'absolute',
     top: 0,
-    bottom: 0,
     left: 0,
     right: 0,
+    bottom: 0,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
+    justifyContent: 'flex-start',
+    paddingTop: HUD_PADDING_TOP,
     zIndex: 10,
+  },
+  portraitBar: {
+    minHeight: HUD_BAR_HEIGHT,
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#000',
+    paddingHorizontal: 12,
+  },
+  centeredScore: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   scoreRow: {
     flexDirection: 'row',
@@ -35,20 +148,67 @@ const styles = StyleSheet.create({
   },
   label: {
     color: 'rgba(255,255,255,0.45)',
-    fontSize: 13,
     fontWeight: '600',
     letterSpacing: 2,
     textTransform: 'uppercase',
   },
   score: {
     color: '#FFFFFF',
-    fontSize: 30,
     fontWeight: 'bold',
     minWidth: 36,
     textAlign: 'center',
   },
   divider: {
     color: 'rgba(255,255,255,0.25)',
-    fontSize: 22,
+  },
+  pauseButton: {
+    position: 'absolute',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    zIndex: 11,
+  },
+  pauseButtonPortrait: {
+    right: 12,
+    top: '50%',
+    marginTop: -18,
+  },
+  pauseButtonLandscape: {
+    right: 12,
+    top: HUD_PADDING_TOP,
+  },
+  pauseText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  difficultyBadge: {
+    position: 'absolute',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    zIndex: 11,
+  },
+  difficultyBadgePortrait: {
+    left: 12,
+    top: '50%',
+    marginTop: -12,
+  },
+  difficultyBadgeLandscape: {
+    left: 12,
+    top: HUD_PADDING_TOP,
+  },
+  difficultyText: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
   },
 });

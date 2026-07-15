@@ -5,13 +5,24 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet } from 'react-native';
 
 import { GameScreen } from './src/screens/GameScreen';
+import { useOrientation } from './src/hooks/useOrientation';
+
+function AppContent() {
+  const { isPortrait } = useOrientation();
+
+  return (
+    <>
+      <StatusBar style="light" hidden={!isPortrait} />
+      <GameScreen />
+    </>
+  );
+}
 
 export default function App() {
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
-        <StatusBar hidden />
-        <GameScreen />
+        <AppContent />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

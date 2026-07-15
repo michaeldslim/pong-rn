@@ -1,0 +1,363 @@
+---
+description: Phased investigation plan for HUD, orientation, and game layout improvements
+globs: src/**/*.{tsx,ts}
+alwaysApply: false
+---
+
+# Pong-RN Game Improvement Plan
+
+Investigation and implementation roadmap. **Priority: HUD board — centered horizontally in both orientations.** Landscape court layout stays as-is; scoreboard top-center on court. Portrait gets a dedicated top HUD (score centered in bar) + smaller play board. Free rotation on intro/win screens; **locked during active play**.
+
+### Scoreboard rule (both orientations)
+
+- Score row (`AI | score : score | You`) is **horizontally centered** always
+- **Landscape:** scoreboard **top-center** on court (`alignItems: 'center'`, `justifyContent: 'flex-start'`)
+- **Portrait:** scoreboard centered within the top HUD bar (not left-aligned)
+
+### Gameplay rule (orientation-specific axes)
+
+| | **Landscape** | **Portrait** |
+|---|---------------|--------------|
+| AI paddle | Left — moves vertically | Top — moves horizontally |
+| Player paddle | Right — drag vertically | Bottom — drag horizontally |
+| Ball | Moves horizontally; bounces top/bottom walls | Moves vertically; bounces left/right walls |
+| Scoring | Ball exits left (you score) / right (AI scores) | Ball exits top (you score) / bottom (AI scores) |
+| Court aspect | Full flex court, 5% side margins | Fixed 9:16 tall court below HUD (`COURT_ASPECT_RATIO_PORTRAIT`) |
+
+### Orientation rule
+
+| Screen state | Rotation |
+|--------------|----------|
+| Intro (`StartOverlay`) | Free — portrait ↔ landscape |
+| Win (`WinOverlay`) | Free |
+| Active play (`gameStarted && !winner`) | **Locked** to orientation at game start |
+| Pause overlay | Locked (still in active match) |
+
+Mid-game live relayout was removed after device QA showed broken paddle positions and missing balls. `expo-screen-orientation` locks the device during play; a `RotationLockedBanner` appears (with brief auto-pause) if the player physically rotates the device.
+
+---
+
+## Implementation Status
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase1 | **Done** | HUD spec, variants, `WIN_SCORE` fix — **HUD centering confirmed on device** |
+| Phase2 | **Done** | Rotation unlocked on menus, `useOrientation`, `isPortraitSV` |
+| Phase3 | **Done** | Portrait HUD bar + landscape overlay; top safe-area inset |
+| Phase4 | **Done** | Portrait court sizing, top/bottom paddle physics |
+| Phase5 | **Done** | Court-framed overlays; intro rotation; mid-game lock replaces live restart |
+| Phase6 | **Done** | Scaling, difficulty, haptics, trail/flash, pause HUD, score animation, status bar, code health, tablet/web |
+
+### Key files
+
+| File | Role |
+|------|------|
+| `src/screens/GameScreen.tsx` | Layout, physics hookup, pause/difficulty, overlay visibility, rotation banner |
+| `src/hooks/useGameplayOrientationLock.ts` | Lock/unlock orientation; accelerometer tilt detect; dimension fallback |
+| `src/physics/ballPhysics.ts` | Portrait/landscape ball + paddle collision loop (worklet) |
+| `src/utils/courtMetrics.ts` | Proportional scaling, `LayoutConfig`, tablet sizing |
+| `src/hooks/useKeyboardControls.ts` | Web arrow/WASD paddle + Space/P pause |
+| `src/hooks/useOrientation.ts` | `{ isPortrait, isLandscape, width, height }` |
+| `src/components/CourtOverlayFrame.tsx` | Positions start/win/pause overlays to measured court bounds |
+| `src/components/StartOverlay.tsx` | Pre-game overlay + difficulty picker (`compact` for landscape) |
+| `src/components/PauseOverlay.tsx` | In-game pause overlay (court-framed) |
+| `src/components/WinOverlay.tsx` | Win screen content (court-framed) |
+| `src/components/RotationLockedBanner.tsx` | Bottom gold-bordered banner; safe-area padded; auto-dismiss |
+| `src/components/ScoreBoard.tsx` | `variant: 'landscape' \| 'portrait'`, pause, score pop animation |
+| `src/components/Paddle.tsx` | `horizontal` prop, scaled thickness, hit flash |
+| `src/components/Ball.tsx` | Scaled size + motion trail ghosts |
+| `src/constants/hud.ts` | HUD sizes, court aspect ratios, margins, tablet constants |
+| `src/constants/game.ts` | `WIN_SCORE`, paddle/ball base sizes, `AI_SPEED_BY_DIFFICULTY` |
+| `src/types/index.ts` | `CourtBounds`, overlay prop types |
+| `app.json` | `"orientation": "default"`, `expo-screen-orientation` plugin; Android hidden status bar |
+| `package.json` | `expo-sensors` (~15) for accelerometer rotation detect during play lock |
+| `android/.../AndroidManifest.xml` | No static `screenOrientation` lock (runtime lock during play) |
+
+---
+
+## Current State
+
+| Area | Today |
+|------|-------|
+| Orientation | Free on intro/win; **locked during play** via `useGameplayOrientationLock` + `expo-screen-orientation` |
+| Court | Landscape: `flex: 1` + 5% margins. Portrait: fixed `portraitCourtSize` (9:16, max 85% below HUD) |
+| HUD | Landscape: `ScoreBoard variant="landscape"` top-center on court (hidden during overlays). Portrait: `variant="portrait"` bar above `playArea` with top safe-area |
+| Physics | `stepBallPhysics` in `ballPhysics.ts`; driven from `useFrameCallback` via `isPortraitSV` |
+| Gestures | Portrait: bottom paddle on **X**. Landscape: right paddle on **Y** |
+| Rotation | Intro/win: `courtBounds` cleared + remeasured on rotate. Play: device locked; `RotationLockedBanner` on physical tilt |
+| Overlays | Portrait: `CourtOverlayFrame` + `courtBounds`. Landscape menus: `fullScreenOverlay` on `playArea` |
+| Rotation banner | Pauses match while visible (~4s); auto-resumes; hides `PauseOverlay`; haptic warning |
+| Ball lifecycle | `ensurePrimaryBall()` before launch; ball entry recreated after splice-on-score |
+| Entities | Scaled from court size via `computeCourtMetrics` |
+| Difficulty | Easy / Medium / Hard — start overlay + HUD badge; scales AI speed |
+| Pause | HUD corner button; Space/P on web; court-framed `PauseOverlay` |
+| Feel | Haptic on paddle hit; ball trail ghosts; paddle hit flash |
+
+---
+
+## Phase1 — HUD Audit & Design ✅
+
+**Goal:** Define HUD before layout code.
+
+### Done
+
+- [x] Landscape scoreboard **top-center** on court *(user confirmed)*
+- [x] Portrait HUD bar **centered** above court *(user confirmed)*
+- [x] HUD contents: scores + labels (AI / You)
+- [x] `ScoreBoard` top-center fix (`justifyContent: 'flex-start'`, `alignItems: 'center'`)
+- [x] `WIN_SCORE` single source of truth (`game.ts`, `WinOverlay`, README)
+- [x] `src/constants/hud.ts` — bar height, padding, typography, aspect ratios
+- [x] `ScoreBoard` API: `variant: 'landscape' | 'portrait'`
+
+---
+
+## Phase2 — Orientation Infrastructure ✅
+
+**Goal:** Enable flexible rotation without breaking the game loop.
+
+### Done
+
+- [x] `app.json` `"orientation"` → `"default"`
+- [x] Android: removed static `screenOrientation="landscape"`
+- [x] `src/hooks/useOrientation.ts`
+- [x] `isPortraitSV` shared value for worklet/gesture branching
+- [x] `expo-screen-orientation` plugin in `app.json`
+- [ ] iOS: verify `Info.plist` on Expo prebuild (when `ios/` generated)
+
+### Constraints (in code)
+
+- `courtW` / `courtH` update via court `onLayout`
+- `handleLayout` skips ball reposition when `isPlaying` (active rally)
+- `updateCourtBounds` only sets state when bounds actually change (avoids layout loops)
+- Gesture clamp uses `courtW` (portrait) or `courtH` (landscape) on movable axis
+
+---
+
+## Phase3 — HUD Layout ✅
+
+**Goal:** Centered scoreboard in both orientations.
+
+### Current layout (`GameScreen`)
+
+```tsx
+<>
+  <SafeAreaView edges={['top', 'left', 'right', 'bottom']}>
+    {isPortrait && <ScoreBoard variant="portrait" />}
+
+    <View style={playArea}>
+      <GestureDetector>
+        <View style={playAreaInner}>
+          <View court key={isPortrait ? 'portrait' : 'landscape'} onLayout={handleLayout}>
+            {showGameplay && !isPortrait && <ScoreBoard variant="landscape" />}
+            {showGameplay && /* paddles, ball, powerups */}
+          </View>
+        </View>
+      </GestureDetector>
+
+      {/* Portrait: court-framed overlays */}
+      {courtBounds && isPortrait && winner && (
+        <CourtOverlayFrame bounds={courtBounds}><WinOverlay ... /></CourtOverlayFrame>
+      )}
+      {courtBounds && isPortrait && !gameStarted && !winner && (
+        <CourtOverlayFrame bounds={courtBounds}><StartOverlay compact ... /></CourtOverlayFrame>
+      )}
+      {courtBounds && isPortrait && isPaused && !rotationBannerVisible && (
+        <CourtOverlayFrame bounds={courtBounds}><PauseOverlay ... /></CourtOverlayFrame>
+      )}
+
+      {/* Landscape: full play-area overlays (avoids stale court-bounds on rotate) */}
+      {!isPortrait && winner && <View fullScreenOverlay><WinOverlay compact ... /></View>}
+      {!isPortrait && !gameStarted && !winner && <View fullScreenOverlay><StartOverlay compact ... /></View>}
+      {!isPortrait && isPaused && !rotationBannerVisible && <View fullScreenOverlay><PauseOverlay ... /></View>}
+    </View>
+  </SafeAreaView>
+
+  <RotationLockedBanner visible={rotationBannerVisible} />  {/* outside SafeAreaView; window insets */}
+</>
+```
+
+### Done
+
+- [x] Portrait HUD above `playArea`; landscape overlay inside court
+- [x] Landscape menu overlays use `fullScreenOverlay`; portrait uses `CourtOverlayFrame`
+- [x] `HUD_BAR_HEIGHT = 64`; pause + difficulty badge in HUD corners
+- [x] Portrait top safe-area — `SafeAreaView` includes `'top'` edge so HUD clears status bar/notch
+- [x] Gameplay hidden when any overlay is open (`showCourtOverlay` / `showGameplay`)
+
+---
+
+## Phase4 — Portrait Play Board ✅
+
+**Goal:** Smaller court below HUD with top/bottom paddle gameplay.
+
+### Done
+
+- [x] Fixed portrait court in `portraitPlayArea`, centered
+- [x] `COURT_ASPECT_RATIO_PORTRAIT = 9/16`
+- [x] Top/bottom paddle physics + `Paddle horizontal={isPortrait}`
+- [x] Playability on small/large phones *(scaling via `courtMetrics`)*
+
+### Sizing formula
+
+```
+maxW = screenW * 0.90
+maxH = (screenH - safeInsets - HUD_BAR_HEIGHT) * 0.85
+courtW = maxW; courtH = courtW / (9/16)
+if courtH > maxH → courtH = maxH; courtW = courtH * (9/16)
+```
+
+---
+
+## Phase5 — Flexible Orientation Transitions ✅
+
+**Goal:** Correct behavior when user rotates between screens; stable gameplay during a match.
+
+### Decision (revised)
+
+Initial approach: debounced mid-game restart (`resetActiveGame`) on orientation change. **Device QA failed** — paddles kept portrait Y positions in landscape, ball could disappear, layout loops caused "Maximum update depth exceeded".
+
+**Current approach:** Lock orientation for the duration of an active match. Free rotation on intro and win screens only.
+
+### Intro / win rotation flow
+
+```
+orientation change (!gameStarted || winner !== null)
+  → useLayoutEffect:
+      isPortraitSV updated
+      setCourtBounds(null)   // avoid stale overlay frame
+  → court onLayout:
+      updateCourtBounds (guarded)
+      syncCourtMetrics + positionPaddles
+  → portrait: overlay reframes via CourtOverlayFrame + courtBounds
+  → landscape: fullScreenOverlay on playArea (centered Start/Win/Pause; compact layout)
+  → court key={portrait|landscape} forces remeasure on orientation flip
+```
+
+### Active play flow
+
+```
+gameStarted && !winner
+  → lockedGameplayPortrait set in startGame / playAgain
+  → useGameplayOrientationLock(lockedPortrait):
+      lockAsync(PORTRAIT_UP | LANDSCAPE)
+      accelerometer baseline tilt (normalized gravity angle via expo-sensors)
+      + Dimensions / ScreenOrientation listeners as fallback
+  → on physical rotate (~32° from baseline) or UI dimension mismatch:
+      RotationLockedBanner (4s, safe-area bottom padding)
+      isPaused = true (auto-resume when banner dismisses)
+      haptic warning; re-lock orientation
+  → on unlock: intro screen or win overlay
+```
+
+### Done
+
+- [x] Layout switch without remounting `GameScreen`
+- [x] `CourtOverlayFrame` — portrait start/win/pause overlays match court bounds
+- [x] Landscape menus use `fullScreenOverlay` (not court bounds — fixes intro rotate layout)
+- [x] `StartOverlay` / `WinOverlay` / `PauseOverlay` extracted; `compact` prop for landscape
+- [x] Portrait HUD visible during overlays (not covered)
+- [x] `courtBounds` tracked from court `onLayout`; cleared on orientation change
+- [x] `lockedGameplayPortrait` captured at `startGame` / `playAgain`; cleared when match ends
+- [x] Court `key={portrait|landscape}` forces layout remeasure on orientation flip
+- [x] Gameplay entities hidden under overlays (no paddle/scoreboard bleed-through)
+- [x] `ensurePrimaryBall()` — ball entry always exists before `launchBall`
+- [x] Mid-game orientation **lock** replaces debounced restart
+- [x] `RotationLockedBanner` for rotation-blocked feedback (replaces `GameToast`)
+- [x] `expo-sensors` accelerometer — normalized gravity tilt detect (works in g and m/s²)
+- [x] Rotation banner auto-pauses; auto-resumes on dismiss; suppresses `PauseOverlay`
+- [x] Removed `resetActiveGame` / `scheduleOrientationReset` mid-game path
+
+### Rotation smoke-test checklist
+
+| State | Rotate portrait ↔ landscape | Expected |
+|-------|------------------------------|----------|
+| Pre-game (start overlay) | Either direction | Portrait: court-framed overlay. Landscape: centered full-screen menu |
+| Mid-game | Either direction | Device stays locked; gold banner + brief pause on physical rotate; paddles/ball unaffected |
+| Paused | Either direction | Same as mid-game (still locked) |
+| Won (play again overlay) | Either direction | Unlocked; overlay reframes; scores unchanged |
+| Cold start landscape → play | N/A | Paddles left/right, vertically centered; ball launches on paddle |
+| Landscape intro | Rotate to landscape | Start menu centered (not clipped to bottom court bounds) |
+
+### Native rebuild required
+
+`expo-screen-orientation` and `expo-sensors` are native modules. After pulling changes:
+
+```bash
+npx expo run:ios
+# or
+npx expo run:android
+```
+
+Hot reload alone does not apply orientation lock or accelerometer.
+
+**Android clean builds:** avoid `cd android && ./gradlew clean` (CMake/codegen race on new arch). Prefer:
+
+```bash
+rm -rf android/app/.cxx android/app/build android/build
+npx expo run:android
+```
+
+---
+
+## Phase6 — Additional Improvements ✅
+
+### Gameplay & feel
+
+- [x] Proportional scaling — paddle/ball/fonts from court size (`courtMetrics.ts`)
+- [x] AI difficulty setting — Easy / Medium / Hard on start screen
+- [x] Haptic feedback on paddle hit (`expo-haptics`)
+- [x] Ball trail / hit flash — 3 ghost trail dots + paddle flash SV
+
+### UI/UX
+
+- [x] Pause button in HUD (corner; score stays centered)
+- [x] Score animation on point scored (Reanimated spring pop)
+- [x] Status bar visible in portrait (`App.tsx` + SafeAreaView top edge)
+- [x] Rotation-locked banner — bottom safe-area, gold border, auto-pause/resume
+- [x] Landscape intro overlay — full play-area (fixes safe-area / centering on rotate)
+
+### Code health
+
+- [x] HUD constants in `src/constants/hud.ts` (`COURT_MARGIN_PCT`, tablet refs, aspect ratios)
+- [x] `WIN_SCORE` used by game logic + `WinOverlay`
+- [x] Overlay framing via `CourtOverlayFrame` + `CourtBounds` type
+- [x] Type-safe layout config — `buildLayoutConfig()` in `courtMetrics.ts`
+- [x] Split portrait/landscape physics into `src/physics/ballPhysics.ts`
+
+### Platform
+
+- [x] Tablet layout tuning — narrower portrait court on large screens
+- [x] Web: keyboard controls + resize via `useWindowDimensions` / `useKeyboardControls`
+- [x] Native orientation lock during play (`useGameplayOrientationLock`)
+
+---
+
+## Success Criteria
+
+- [x] Score row horizontally centered — both orientations *(user confirmed)*
+- [x] Landscape: top-center HUD; left/right paddles
+- [x] Portrait: top HUD bar below notch; top/bottom paddles; smaller court
+- [x] `WIN_SCORE` consistent across code and UI
+- [x] Portrait start/win/pause overlays framed to court bounds; landscape menus full-screen
+- [x] Mid-game rotation prevented (lock + banner on physical tilt)
+- [x] Intro rotation reframes overlay without gameplay bleed
+- [x] Playability scaling on small and large phones/tablets
+- [x] Cold-start landscape play — paddles centered, ball visible
+
+## Resolved Questions
+
+1. Both orientations rotatable on menus → `"default"` in `app.json`
+2. Portrait gameplay → top/bottom paddles; landscape → left/right
+3. Rotation during play → **lock to starting orientation** (mid-game relayout abandoned after QA)
+4. HUD powerups/ball count → deferred
+5. Tablet-specific orientation lock → deferred (play lock applies on tablets too)
+
+## Next Steps
+
+1. ~~HUD centered~~ ✅
+2. ~~Phase5 overlays~~ ✅
+3. ~~Phase6 polish~~ ✅
+4. ~~Orientation lock during play~~ ✅
+5. ~~Device QA — rotation lock + banner~~ ✅ *(Android device confirmed; banner + auto-pause)*
+6. **iOS prebuild** — confirm `Info.plist` orientation keys when `ios/` is generated
+7. **iOS device QA** — rotation banner safe-area + accelerometer detect
