@@ -24,6 +24,17 @@ Investigation and implementation roadmap. **Priority: HUD board — centered hor
 | Scoring | Ball exits left (you score) / right (AI scores) | Ball exits top (you score) / bottom (AI scores) |
 | Court aspect | Full flex court, 5% side margins | Fixed 9:16 tall court below HUD (`COURT_ASPECT_RATIO_PORTRAIT`) |
 
+### Powerup legend (colored court icons)
+
+Powerups spawn on court during play (~every 8s, max 5, 6s lifetime). Each is a **colored circle with a white first-letter label**. The collector is whichever side owns that half of the court when the ball hits or you tap the orb — **AI** (left/top) or **You** (right/bottom).
+
+| Label | Color | Type | Effect on collector's paddle | Duration |
+|-------|-------|------|------------------------------|----------|
+| **G** | Blue (`#007AFF`) | Grow | Paddle height × 1.5 | 5 s |
+| **S** | Red (`#FF3B30`) | Shrink | Paddle height × 0.6 | 5 s |
+
+Spawn bias ~60% Grow / 40% Shrink. Constants: `POWERUP_LABELS`, `POWERUP_COLORS`, `POWERUP_MAX`, `POWERUP_LIFETIME` in `src/constants/game.ts`. Component: `src/components/Powerup.tsx`.
+
 ### Orientation rule
 
 | Screen state | Rotation |
@@ -47,6 +58,8 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 | Phase4 | **Done** | Portrait court sizing, top/bottom paddle physics |
 | Phase5 | **Done** | Court-framed overlays; intro rotation; mid-game lock replaces live restart |
 | Phase6 | **Done** | Scaling, difficulty, haptics, trail/flash, pause HUD, score animation, status bar, code health, tablet/web |
+| Phase7 | **Done** | Labeled powerups (G/S), court stones with random placement + ball reflection |
+| Phase8 | **Planned** | Expanded powerup roster, tactical modifiers, HUD active-effect summary |
 
 ### Key files
 
@@ -54,8 +67,9 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 |------|------|
 | `src/screens/GameScreen.tsx` | Layout, physics hookup, pause/difficulty, overlay visibility, rotation banner |
 | `src/hooks/useGameplayOrientationLock.ts` | Lock/unlock orientation; accelerometer tilt detect; dimension fallback |
-| `src/physics/ballPhysics.ts` | Portrait/landscape ball + paddle collision loop (worklet) |
+| `src/physics/ballPhysics.ts` | Portrait/landscape ball + paddle collision loop; stone reflection (worklet) |
 | `src/utils/courtMetrics.ts` | Proportional scaling, `LayoutConfig`, tablet sizing |
+| `src/utils/stones.ts` | Random court-stone placement (count + position, paddle-safe) |
 | `src/hooks/useKeyboardControls.ts` | Web arrow/WASD paddle + Space/P pause |
 | `src/hooks/useOrientation.ts` | `{ isPortrait, isLandscape, width, height }` |
 | `src/components/CourtOverlayFrame.tsx` | Positions start/win/pause overlays to measured court bounds |
@@ -66,8 +80,10 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 | `src/components/ScoreBoard.tsx` | `variant: 'landscape' \| 'portrait'`, pause, score pop animation |
 | `src/components/Paddle.tsx` | `horizontal` prop, scaled thickness, hit flash |
 | `src/components/Ball.tsx` | Scaled size + motion trail ghosts |
+| `src/components/Powerup.tsx` | Labeled powerup orbs (first-letter + color); tap to collect |
+| `src/components/Stone.tsx` | Gray court obstacles (visual only; physics in worklet) |
 | `src/constants/hud.ts` | HUD sizes, court aspect ratios, margins, tablet constants |
-| `src/constants/game.ts` | `WIN_SCORE`, paddle/ball base sizes, `AI_SPEED_BY_DIFFICULTY` |
+| `src/constants/game.ts` | `WIN_SCORE`, paddle/ball sizes, `AI_SPEED_BY_DIFFICULTY`, powerup + stone tuning |
 | `src/types/index.ts` | `CourtBounds`, overlay prop types |
 | `app.json` | `"orientation": "default"`, `expo-screen-orientation` plugin; Android hidden status bar |
 | `package.json` | `expo-sensors` (~15) for accelerometer rotation detect during play lock |
@@ -92,6 +108,20 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 | Difficulty | Easy / Medium / Hard — start overlay + HUD badge; scales AI speed |
 | Pause | HUD corner button; Space/P on web; court-framed `PauseOverlay` |
 | Feel | Haptic on paddle hit; ball trail ghosts; paddle hit flash |
+| Powerups | Spawn every 8s (max 5, 6s lifetime); labeled orbs — see **Powerup legend** (top + below) |
+| Stones | 3–4 per match, random center placement; ball reflects off stones; layout fixed for active rally |
+| Ball speed | Paddle hits use total velocity magnitude (not one axis only); stone bounces enforce a minimum speed floor |
+
+### Powerup legend (reference)
+
+Same table as **Powerup legend** at top of doc:
+
+| Label | Color | Type | Effect on collector's paddle | Duration |
+|-------|-------|------|------------------------------|----------|
+| **G** | Blue (`#007AFF`) | Grow | Paddle height × 1.5 | 5 s |
+| **S** | Red (`#FF3B30`) | Shrink | Paddle height × 0.6 | 5 s |
+
+Collector = court-half owner (AI left/top, You right/bottom) on ball hit or tap.
 
 ---
 
@@ -149,7 +179,7 @@ Mid-game live relayout was removed after device QA showed broken paddle position
         <View style={playAreaInner}>
           <View court key={isPortrait ? 'portrait' : 'landscape'} onLayout={handleLayout}>
             {showGameplay && !isPortrait && <ScoreBoard variant="landscape" />}
-            {showGameplay && /* paddles, ball, powerups */}
+            {showGameplay && /* paddles, ball, powerups, stones */}
           </View>
         </View>
       </GestureDetector>
@@ -332,6 +362,123 @@ npx expo run:android
 
 ---
 
+## Phase7 — Court Entities (Powerups & Stones) ✅
+
+**Goal:** Readable powerup feedback and dynamic court obstacles.
+
+### Powerups — labeled icons
+
+- [x] Replace color-only orbs with first-letter labels (`G` / `S`) via `Powerup.tsx`
+- [x] `POWERUP_LABELS` + `POWERUP_COLORS` in `game.ts`
+- [x] Ball collision + tap both apply effect to court-half owner (AI or You)
+- [x] Grow / shrink paddle height for 5s (scaled base height from `courtMetrics`)
+
+### Stones — random obstacles
+
+- [x] `Stone.tsx` — gray rocky circles on court
+- [x] `generateCourtStones()` in `stones.ts` — random count (3–4) and positions
+- [x] Placement avoids paddle zones and stone overlap (rejection sampling)
+- [x] `resolveStoneCollisions()` in `ballPhysics.ts` — UI-thread circle bounce
+- [x] Regenerate on **Start** / **Play Again**; stable during active rally (not on every layout)
+
+### Ball speed fix (stone interaction)
+
+Paddle hits previously used only `|vx|` (landscape) or `|vy|` (portrait). After a stone deflection, most speed could sit on the other axis — the next paddle hit then reset the ball to near-crawl speed.
+
+- [x] `nextPaddleHitSpeed()` uses `Math.hypot(vx, vy)` for paddle rebound speed
+- [x] `resolveStoneCollisions()` enforces minimum speed (`initialBallSpeed × 0.55`) after stone bounce
+
+Note: center court still has intentional **0.75×** travel speed on the primary axis (`zoneMult` in `ballPhysics.ts`, middle 30% of court).
+
+### Stone tuning (`game.ts`)
+
+| Constant | Value |
+|----------|-------|
+| `STONE_RADIUS_BASE` | 16 px (scaled by court) |
+| `STONE_COUNT_MIN` | 3 |
+| `STONE_COUNT_MAX` | 4 |
+
+---
+
+## Phase8 — Expanded Powerups & UX *(planned)*
+
+**Goal:** More variety and strategy on court without breaking the labeled-orb + court-half collector model from Phase7.
+
+### Design rules (carry forward)
+
+- Each powerup = **colored circle + white first letter** (`Powerup.tsx`, `POWERUP_LABELS`, `POWERUP_COLORS`)
+- Collector default = court-half owner on ball hit or tap (**AI** left/top, **You** right/bottom)
+- Duration default = **5 s** unless noted; avoid infinite stacking — refresh timer or cap stacks
+- Portrait: consider subtle **AI / You** tint on orb so half-court ownership is obvious
+
+### Tier 1 — Paddle modifiers *(easy; same pattern as G/S)*
+
+Extend `PowerupType` + `applyPowerup()` in `GameScreen.tsx` (paddle shared values).
+
+| Label | Color (suggested) | Type | Effect on target paddle | Notes |
+|-------|-------------------|------|-------------------------|-------|
+| **G** | Blue `#007AFF` | Grow | Height × 1.5 | ✅ Shipped (Phase7) |
+| **S** | Red `#FF3B30` | Shrink | Height × 0.6 | ✅ Shipped (Phase7) |
+| **F** | Cyan `#32ADE6` | Fast | AI speed × 1.4 or player drag responsiveness | AI uses `metrics.aiSpeed`; player may need input multiplier |
+| **T** | Green `#34C759` | Thick | Paddle short-edge × 1.4 | Wider block surface (`paddleWidth`) |
+| **N** | Orange `#FF9500` | Narrow | Paddle short-edge × 0.7 | Harder blocks |
+| **K** | Purple `#AF52DE` | Sticky | Ball attaches ~300ms on hit, then releases with aim | Reuse `ballAttached` / `attachCountdown` path |
+
+### Tier 2 — Ball modifiers *(medium; `ballPhysics.ts`)*
+
+| Label | Color (suggested) | Type | Effect | Notes |
+|-------|-------------------|------|--------|-------|
+| **B** | Yellow `#FFCC00` | Boost | Ball speed × 1.25 for 3s or next 3 paddle hits | Shared `ballSpeedMultiplierSV` in worklet |
+| **C** | Teal `#5AC8FA` | Curve | Slight spin / magnus on wall & stone bounces | Add tangential velocity nudge per frame |
+| **M** | White `#FFFFFF` | Multi | Brief 2-ball rally | `MAX_BALL_SLOTS` pool already reserved in `game.ts` |
+| **R** | Pink `#FF2D55` | Reverse | Flip `vx`/`vy` once on collect | One-shot chaos orb |
+
+### Tier 3 — Court / tactical *(medium; stones + spawn logic)*
+
+| Label | Color (suggested) | Type | Effect | Notes |
+|-------|-------------------|------|--------|-------|
+| **O** | Brown `#A2845E` | Obstacle | Spawn 1 temporary stone (~8s) | `generateCourtStones` single placement; remove on timeout |
+| **X** | Gray `#8E8E93` | Clear | Remove nearest stone to orb | Mutate `stonesSV` + React state |
+| **Z** | Indigo `#5856D6` | Zone | Invert or disable center `zoneMult` slow for 5s | Toggle flag in `ballPhysics.ts` |
+
+### Tier 4 — Mind-game *(high fun)*
+
+| Label | Color (suggested) | Type | Effect | Notes |
+|-------|-------------------|------|--------|-------|
+| **A** | Blue ring | Ally | Buff **collector** | Same as current G/S targeting |
+| **E** | Red ring | Enemy | Debuff **opponent** (invert collector) | Shrink/grow applied to other paddle |
+| **?** | Gold `#FFD60A` | Mystery | Random effect from Tier 1–2 pool | Gold orb; label `?` |
+
+### UX & balance *(Phase8 polish)*
+
+- [ ] **HUD active effects** — small icons beside AI / You scores (e.g. `G↑` `S↓` with countdown)
+- [ ] **Orb lifetime pulse** — shrink or flash in last 2s of `POWERUP_LIFETIME`
+- [ ] **Buff vs debuff rings** — blue outline = helps collector; red = hurts opponent; gold = mystery
+- [ ] **Difficulty spawn bias** — Easy: more Grow near losing player; Hard: more Enemy / Mystery
+- [ ] **Stacking rules** — same type refreshes duration; conflicting effects (Grow + Shrink) cancel or pick stronger
+- [ ] **Stone hit feedback** — optional light haptic / tap sound on stone bounce
+
+### Suggested implementation order
+
+1. **E — Enemy** (invert target; biggest strategic depth, low code)
+2. **B — Boost** (one speed multiplier SV; feels great with stones)
+3. **M — Multi** (use existing ball slot pool)
+4. **HUD active effects** (players understand paddle size changes)
+5. Remaining Tier 1 paddle mods → Tier 3 court → Tier 4 Mystery
+
+### Phase8 files (expected touch)
+
+| File | Changes |
+|------|---------|
+| `src/constants/game.ts` | Extend `PowerupType`, labels, colors, spawn weights |
+| `src/screens/GameScreen.tsx` | `applyPowerup` branches, spawn picker, HUD effect state |
+| `src/physics/ballPhysics.ts` | Boost multiplier, multi-ball, curve, zone toggle |
+| `src/components/Powerup.tsx` | Buff/debuff ring styles; mystery `?` |
+| `src/components/ScoreBoard.tsx` | Active effect chips (optional) |
+| `src/utils/stones.ts` | Temporary stone add/remove for **O** / **X** |
+
+---
+
 ## Success Criteria
 
 - [x] Score row horizontally centered — both orientations *(user confirmed)*
@@ -343,14 +490,25 @@ npx expo run:android
 - [x] Intro rotation reframes overlay without gameplay bleed
 - [x] Playability scaling on small and large phones/tablets
 - [x] Cold-start landscape play — paddles centered, ball visible
+- [x] Powerups show **G** / **S** labels with correct grow/shrink effects
+- [x] Random court stones reflect the ball; layout persists per match
+
+### Phase8 (when shipped)
+
+- [ ] At least 2 new powerup types beyond G/S (recommended: **E**, **B**)
+- [ ] Expanded legend table in this doc matches `POWERUP_LABELS` in code
+- [ ] HUD or on-court feedback shows active paddle/ball effects
+- [ ] No ball-speed crawl regressions with new ball modifiers
 
 ## Resolved Questions
 
 1. Both orientations rotatable on menus → `"default"` in `app.json`
 2. Portrait gameplay → top/bottom paddles; landscape → left/right
 3. Rotation during play → **lock to starting orientation** (mid-game relayout abandoned after QA)
-4. HUD powerups/ball count → deferred
+4. HUD powerup/ball count indicator → deferred (powerups on court are labeled; HUD summary not built)
 5. Tablet-specific orientation lock → deferred (play lock applies on tablets too)
+6. Powerup letters → **G** = Grow (blue), **S** = Shrink (red); collector = court-half owner
+7. More powerup types → Phase8 backlog (see tiers **F/T/N/K**, **B/C/M/R**, **O/X/Z**, **A/E/?**)
 
 ## Next Steps
 
@@ -359,5 +517,9 @@ npx expo run:android
 3. ~~Phase6 polish~~ ✅
 4. ~~Orientation lock during play~~ ✅
 5. ~~Device QA — rotation lock + banner~~ ✅ *(Android device confirmed; banner + auto-pause)*
-6. **iOS prebuild** — confirm `Info.plist` orientation keys when `ios/` is generated
-7. **iOS device QA** — rotation banner safe-area + accelerometer detect
+6. ~~Powerup labels + court stones~~ ✅
+7. ~~Ball speed crawl after stone deflect~~ ✅ *(paddle hit uses total speed magnitude)*
+8. **iOS prebuild** — confirm `Info.plist` orientation keys when `ios/` is generated
+9. **iOS device QA** — rotation banner safe-area + accelerometer detect
+10. **Phase8** — implement **E** (Enemy) + **B** (Boost) first; then HUD active effects
+11. **Optional** — stone hit haptic/sound; Mystery (**?**) powerup; multi-ball (**M**)

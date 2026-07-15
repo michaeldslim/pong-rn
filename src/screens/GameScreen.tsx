@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { LayoutChangeEvent, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { LayoutChangeEvent, StyleSheet, View } from 'react-native';
 import { Audio } from 'expo-av';
 import type { Sound } from 'expo-av/build/Audio';
 import * as Haptics from 'expo-haptics';
@@ -20,14 +20,16 @@ import { Ball } from '../components/Ball';
 import { CourtOverlayFrame } from '../components/CourtOverlayFrame';
 import { Paddle } from '../components/Paddle';
 import { PauseOverlay } from '../components/PauseOverlay';
+import { Powerup } from '../components/Powerup';
 import {
   RotationLockedBanner,
   useRotationBannerDismiss,
 } from '../components/RotationLockedBanner';
 import { ScoreBoard } from '../components/ScoreBoard';
 import { StartOverlay } from '../components/StartOverlay';
+import { Stone } from '../components/Stone';
 import { WinOverlay } from '../components/WinOverlay';
-import type { AiDifficulty } from '../constants/game';
+import type { AiDifficulty, PowerupType } from '../constants/game';
 import { BALL_SIZE, PADDLE_HEIGHT, PADDLE_WIDTH, POWERUP_MAX, POWERUP_LIFETIME } from '../constants/game';
 import { useGameplayOrientationLock } from '../hooks/useGameplayOrientationLock';
 import { useKeyboardControls } from '../hooks/useKeyboardControls';
@@ -36,6 +38,7 @@ import type { BallEntry, PhysicsCallbacks, PhysicsDeps, ScaledMetrics } from '..
 import { stepBallPhysics } from '../physics/ballPhysics';
 import type { CourtBounds } from '../types';
 import { buildLayoutConfig, computeCourtMetrics } from '../utils/courtMetrics';
+import { generateCourtStones, type CourtStone } from '../utils/stones';
 
 const DEFAULT_METRICS: ScaledMetrics = {
   paddleWidth: PADDLE_WIDTH,
@@ -136,6 +139,7 @@ export function GameScreen() {
   const ballAttachSide = useSharedValue(0);
   const isPortraitSV = useSharedValue(isPortrait ? 1 : 0);
   const metricsSV = useSharedValue<ScaledMetrics>(DEFAULT_METRICS);
+  const stonesSV = useSharedValue<CourtStone[]>([]);
 
   const ballsRef = useRef<BallEntry[]>([]);
   const [ballsVersion, setBallsVersion] = useState(0);
@@ -222,7 +226,8 @@ export function GameScreen() {
     };
   }, [clearAttachTimer]);
 
-  const [powerups, setPowerups] = useState<Array<{ id: number; x: number; y: number; type: 'grow' | 'shrink'; createdAt: number }>>([]);
+  const [powerups, setPowerups] = useState<Array<{ id: number; x: number; y: number; type: PowerupType; createdAt: number }>>([]);
+  const [stones, setStones] = useState<CourtStone[]>([]);
   const powerupId = useRef(1);
 
   const syncCourtMetrics = useCallback((width: number, height: number, portrait: boolean) => {
@@ -246,6 +251,13 @@ export function GameScreen() {
     return metrics;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const regenerateStones = useCallback((width: number, height: number, portrait: boolean) => {
+    const metrics = computeCourtMetrics(width, height, portrait, difficultyRef.current);
+    const courtStones = generateCourtStones(width, height, metrics.scale, portrait, metrics);
+    stonesSV.value = courtStones;
+    setStones(courtStones);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const W = courtW.value;
     const H = courtH.value;
@@ -262,7 +274,7 @@ export function GameScreen() {
       const radius = metricsSV.value.powerupRadius;
       const x = Math.random() * (W * 0.6) + W * 0.2;
       const y = Math.random() * (H * 0.6) + H * 0.2;
-      const type: 'grow' | 'shrink' = Math.random() < 0.6 ? 'grow' : 'shrink';
+      const type: PowerupType = Math.random() < 0.6 ? 'grow' : 'shrink';
       const id = powerupId.current++;
       const now = Date.now();
       setPowerups((p) => {
@@ -387,6 +399,7 @@ export function GameScreen() {
 
       if (!gameStartedRef.current || winnerRef.current !== null) {
         positionPaddles(width, height, portrait, metrics);
+        regenerateStones(width, height, portrait);
         if (!isPlaying.value) {
           placeBallOnHumanPaddle(width, height, portrait, metrics);
           primaryBVX.value = 0;
@@ -410,6 +423,7 @@ export function GameScreen() {
       positionPaddles,
       syncCourtMetrics,
       ensurePrimaryBall,
+      regenerateStones,
       updateCourtBounds,
     ],
   );
@@ -418,7 +432,7 @@ export function GameScreen() {
     setPowerups((p) => p.filter((pu) => pu.id !== id));
   }, []);
 
-  const applyPowerup = useCallback((pu: { id: number; x: number; y: number; type: 'grow' | 'shrink' }, collector: 'AI' | 'You') => {
+  const applyPowerup = useCallback((pu: { id: number; x: number; y: number; type: PowerupType }, collector: 'AI' | 'You') => {
     const base = basePaddleHeightRef.current;
     if (pu.type === 'grow') {
       if (collector === 'You') {
@@ -480,6 +494,7 @@ export function GameScreen() {
     leftPaddleFlashSV,
     rightPaddleFlashSV,
     metricsSV,
+    stonesSV,
   }), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const physicsCallbacks = useMemo<PhysicsCallbacks>(() => ({
@@ -571,6 +586,7 @@ export function GameScreen() {
     const portrait = isPortraitRef.current;
     const lastWinner = winnerRef.current;
     const metrics = syncCourtMetrics(W, H, portrait);
+    regenerateStones(W, H, portrait);
     aiScoreSV.value = 0;
     playerScoreSV.value = 0;
     positionPaddles(W, H, portrait, metrics);
@@ -591,13 +607,14 @@ export function GameScreen() {
     ballAttached.value = false;
     attachCountdown.value = 0;
     launchBall(lastWinner === 'You' ? 0 : 1, true, 3000);
-  }, [launchBall, placeBallOnHumanPaddle, positionPaddles, bumpBalls, syncCourtMetrics]);
+  }, [launchBall, placeBallOnHumanPaddle, positionPaddles, bumpBalls, syncCourtMetrics, regenerateStones]);
 
   const startGame = useCallback(() => {
     const W = courtW.value;
     const H = courtH.value;
     const portrait = isPortraitRef.current;
     const metrics = syncCourtMetrics(W, H, portrait);
+    regenerateStones(W, H, portrait);
     setGameStarted(true);
     setIsPaused(false);
     setLockedGameplayPortrait(portrait);
@@ -613,7 +630,7 @@ export function GameScreen() {
     ballAttached.value = false;
     attachCountdown.value = 0;
     launchBall(0, true, 3000);
-  }, [launchBall, placeBallOnHumanPaddle, positionPaddles, bumpBalls, syncCourtMetrics]);
+  }, [launchBall, placeBallOnHumanPaddle, positionPaddles, bumpBalls, syncCourtMetrics, regenerateStones]);
 
   const powerupSize = powerupRadius * 2;
   const showCourtOverlay = !gameStarted || winner !== null || isPaused;
@@ -651,6 +668,9 @@ export function GameScreen() {
             paddleWidth={paddleWidthSV}
             flash={rightPaddleFlashSV}
           />
+          {stones.map((stone) => (
+            <Stone key={stone.id} stone={stone} />
+          ))}
           {ballsRef.current.map((b, idx) => (
             <Ball
               key={`${ballsVersion}-${idx}`}
@@ -661,33 +681,21 @@ export function GameScreen() {
               trailY={idx === 0 ? [trail0Y, trail1Y, trail2Y] : undefined}
             />
           ))}
-          {powerups.map((pu) => {
-            const bg = pu.type === 'grow' ? '#007AFF' : '#FF3B30';
-            const size = powerupSize || 32;
-            return (
-              <TouchableOpacity
-                key={pu.id}
-                activeOpacity={0.85}
-                onPress={() => {
-                  const collector: 'AI' | 'You' = isPortrait
-                    ? (pu.y < courtH.value / 2 ? 'AI' : 'You')
-                    : (pu.x < courtW.value / 2 ? 'AI' : 'You');
-                  applyPowerup({ ...pu }, collector);
-                }}
-                style={{
-                  position: 'absolute',
-                  left: pu.x - size / 2,
-                  top: pu.y - size / 2,
-                  width: size,
-                  height: size,
-                  borderRadius: size / 2,
-                  backgroundColor: bg,
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                }}
-              />
-            );
-          })}
+          {powerups.map((pu) => (
+            <Powerup
+              key={pu.id}
+              x={pu.x}
+              y={pu.y}
+              type={pu.type}
+              size={powerupSize || 32}
+              onCollect={() => {
+                const collector: 'AI' | 'You' = isPortrait
+                  ? (pu.y < courtH.value / 2 ? 'AI' : 'You')
+                  : (pu.x < courtW.value / 2 ? 'AI' : 'You');
+                applyPowerup({ ...pu }, collector);
+              }}
+            />
+          ))}
         </>
       )}
     </>

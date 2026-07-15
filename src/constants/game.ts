@@ -37,8 +37,25 @@ export const AI_DIFFICULTY_LABELS: Record<AiDifficulty, string> = {
 export const WIN_SCORE = 5;
 
 // Powerup tuning
+export type PowerupType = 'grow' | 'shrink';
+
 export const POWERUP_MAX = 5;
 export const POWERUP_LIFETIME = 6000; // ms
+
+export const POWERUP_LABELS: Record<PowerupType, string> = {
+  grow: 'G',
+  shrink: 'S',
+};
+
+export const POWERUP_COLORS: Record<PowerupType, string> = {
+  grow: '#007AFF',
+  shrink: '#FF3B30',
+};
+
+// Court stones — random obstacles that reflect the ball
+export const STONE_RADIUS_BASE = 16;
+export const STONE_COUNT_MIN = 3;
+export const STONE_COUNT_MAX = 4;
 
 // Maximum shared-value-backed ball slots (pool size for splitting)
 export const MAX_BALL_SLOTS = 6;

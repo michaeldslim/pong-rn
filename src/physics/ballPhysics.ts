@@ -1,6 +1,7 @@
 import { runOnJS } from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
 import { WIN_SCORE } from '../constants/game';
+import type { CourtStone } from '../utils/stones';
 
 export interface BallEntry {
   x: SharedValue<number>;
@@ -41,6 +42,7 @@ export interface PhysicsDeps {
   leftPaddleFlashSV: SharedValue<number>;
   rightPaddleFlashSV: SharedValue<number>;
   metricsSV: SharedValue<ScaledMetrics>;
+  stonesSV: SharedValue<CourtStone[]>;
 }
 
 export interface PhysicsCallbacks {
@@ -65,6 +67,58 @@ function decayFlash(flashSV: SharedValue<number>) {
   if (flashSV.value > 0) {
     flashSV.value = Math.max(0, flashSV.value - 0.12);
   }
+}
+
+function resolveStoneCollisions(b: BallEntry, stones: CourtStone[], minSpeed: number): void {
+  'worklet';
+  const ballSize = b.size!.value;
+  const ballRadius = ballSize / 2;
+  let rcx = b.x.value + ballRadius;
+  let rcy = b.y.value + ballRadius;
+
+  for (let s = 0; s < stones.length; s++) {
+    const stone = stones[s];
+    const dx = rcx - stone.x;
+    const dy = rcy - stone.y;
+    const distSq = dx * dx + dy * dy;
+    const minDist = ballRadius + stone.radius;
+    if (distSq >= minDist * minDist || distSq < 0.0001) continue;
+
+    const dist = Math.sqrt(distSq);
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const overlap = minDist - dist;
+
+    rcx += nx * overlap;
+    rcy += ny * overlap;
+    b.x.value = rcx - ballRadius;
+    b.y.value = rcy - ballRadius;
+
+    const vx = b.vx.value;
+    const vy = b.vy.value;
+    const dot = vx * nx + vy * ny;
+    if (dot < 0) {
+      b.vx.value = vx - 2 * dot * nx;
+      b.vy.value = vy - 2 * dot * ny;
+    }
+  }
+
+  const speed = Math.hypot(b.vx.value, b.vy.value);
+  if (speed > 0 && speed < minSpeed) {
+    const scale = minSpeed / speed;
+    b.vx.value *= scale;
+    b.vy.value *= scale;
+  }
+}
+
+function ballSpeedMagnitude(b: BallEntry): number {
+  'worklet';
+  return Math.hypot(b.vx.value, b.vy.value);
+}
+
+function nextPaddleHitSpeed(b: BallEntry, m: ScaledMetrics): number {
+  'worklet';
+  return Math.min(ballSpeedMagnitude(b) + m.ballSpeedIncrement, m.maxBallSpeed);
 }
 
 function stepPortraitBall(
@@ -97,6 +151,8 @@ function stepPortraitBall(
     b.vx.value = -Math.abs(b.vx.value);
   }
 
+  resolveStoneCollisions(b, deps.stonesSV.value, m.initialBallSpeed * 0.55);
+
   if (i === 0) {
     const ballCenterX = b.x.value + ballSize / 2;
     const aiDiff = ballCenterX - (deps.leftPaddleX.value + deps.leftPaddleHeight.value / 2);
@@ -120,7 +176,7 @@ function stepPortraitBall(
     const relHit =
       (ballCenterX - (deps.leftPaddleX.value + deps.leftPaddleHeight.value / 2)) /
       (deps.leftPaddleHeight.value / 2);
-    const speed = Math.min(Math.abs(b.vy.value) + m.ballSpeedIncrement, m.maxBallSpeed);
+    const speed = nextPaddleHitSpeed(b, m);
     b.vy.value = speed;
     b.vx.value = relHit * speed * 0.8;
     b.y.value = deps.leftPaddleY.value + m.paddleWidth + 1;
@@ -138,7 +194,7 @@ function stepPortraitBall(
     const relHit =
       (ballCenterX - (deps.rightPaddleX.value + deps.rightPaddleHeight.value / 2)) /
       (deps.rightPaddleHeight.value / 2);
-    const speed = Math.min(Math.abs(b.vy.value) + m.ballSpeedIncrement, m.maxBallSpeed);
+    const speed = nextPaddleHitSpeed(b, m);
     b.vy.value = -speed;
     b.vx.value = relHit * speed * 0.8;
     b.y.value = deps.rightPaddleY.value - ballSize - 1;
@@ -210,6 +266,8 @@ function stepLandscapeBall(
     b.vy.value = -Math.abs(b.vy.value);
   }
 
+  resolveStoneCollisions(b, deps.stonesSV.value, m.initialBallSpeed * 0.55);
+
   if (i === 0) {
     const ballCenterY = b.y.value + ballSize / 2;
     const aiDiff = ballCenterY - (deps.leftPaddleY.value + deps.leftPaddleHeight.value / 2);
@@ -231,7 +289,7 @@ function stepLandscapeBall(
     const relHit =
       (ballCenterY - (deps.leftPaddleY.value + deps.leftPaddleHeight.value / 2)) /
       (deps.leftPaddleHeight.value / 2);
-    const speed = Math.min(Math.abs(b.vx.value) + m.ballSpeedIncrement, m.maxBallSpeed);
+    const speed = nextPaddleHitSpeed(b, m);
     b.vx.value = speed;
     b.vy.value = relHit * speed * 0.8;
     b.x.value = deps.leftPaddleX.value + m.paddleWidth + 1;
@@ -249,7 +307,7 @@ function stepLandscapeBall(
     const relHit =
       (ballCenterY - (deps.rightPaddleY.value + deps.rightPaddleHeight.value / 2)) /
       (deps.rightPaddleHeight.value / 2);
-    const speed = Math.min(Math.abs(b.vx.value) + m.ballSpeedIncrement, m.maxBallSpeed);
+    const speed = nextPaddleHitSpeed(b, m);
     b.vx.value = -speed;
     b.vy.value = relHit * speed * 0.8;
     b.x.value = deps.rightPaddleX.value - ballSize - 1;
