@@ -33,6 +33,8 @@ export interface PhysicsDeps {
   rightPaddleY: SharedValue<number>;
   leftPaddleHeight: SharedValue<number>;
   rightPaddleHeight: SharedValue<number>;
+  leftPaddleWidth: SharedValue<number>;
+  rightPaddleWidth: SharedValue<number>;
   ballAttached: SharedValue<boolean>;
   attachCountdown: SharedValue<number>;
   ballAttachSide: SharedValue<number>;
@@ -44,10 +46,17 @@ export interface PhysicsDeps {
   rightPaddleFlashSV: SharedValue<number>;
   metricsSV: SharedValue<ScaledMetrics>;
   stonesSV: SharedValue<CourtStone[]>;
+  ballSpeedMultiplier: SharedValue<number>;
+  zoneMultDisabled: SharedValue<number>;
+  leftSticky: SharedValue<number>;
+  rightSticky: SharedValue<number>;
+  aiSpeedMultiplier: SharedValue<number>;
+  curveActive: SharedValue<number>;
 }
 
 export interface PhysicsCallbacks {
   playPaddleHit: () => void;
+  playStoneHit: () => void;
   checkPowerups: (
     ballCenterX: number,
     ballCenterY: number,
@@ -88,12 +97,13 @@ function updateAiPaddle(
   trackCenter: number | null,
 ): void {
   'worklet';
+  const aiSpeed = m.aiSpeed * deps.aiSpeedMultiplier.value;
   if (portrait) {
     if (trackCenter != null) {
       const minX = m.paddleVerticalPadding;
       const maxX = Math.max(minX, W - deps.leftPaddleHeight.value - m.paddleVerticalPadding);
       const aiDiff = trackCenter - (deps.leftPaddleX.value + deps.leftPaddleHeight.value / 2);
-      const aiStep = Math.sign(aiDiff) * Math.min(Math.abs(aiDiff), m.aiSpeed * dt);
+      const aiStep = Math.sign(aiDiff) * Math.min(Math.abs(aiDiff), aiSpeed * dt);
       deps.leftPaddleX.value = Math.max(minX, Math.min(maxX, deps.leftPaddleX.value + aiStep));
       return;
     }
@@ -105,7 +115,7 @@ function updateAiPaddle(
     const minY = m.paddleVerticalPadding;
     const maxY = Math.max(minY, H - deps.leftPaddleHeight.value - m.paddleVerticalPadding);
     const aiDiff = trackCenter - (deps.leftPaddleY.value + deps.leftPaddleHeight.value / 2);
-    const aiStep = Math.sign(aiDiff) * Math.min(Math.abs(aiDiff), m.aiSpeed * dt);
+    const aiStep = Math.sign(aiDiff) * Math.min(Math.abs(aiDiff), aiSpeed * dt);
     deps.leftPaddleY.value = Math.max(minY, Math.min(maxY, deps.leftPaddleY.value + aiStep));
     return;
   }
@@ -119,12 +129,13 @@ function decayFlash(flashSV: SharedValue<number>) {
   }
 }
 
-function resolveStoneCollisions(b: BallEntry, stones: CourtStone[], minSpeed: number): void {
+function resolveStoneCollisions(b: BallEntry, stones: CourtStone[], minSpeed: number): boolean {
   'worklet';
   const ballSize = b.size!.value;
   const ballRadius = ballSize / 2;
   let rcx = b.x.value + ballRadius;
   let rcy = b.y.value + ballRadius;
+  let hit = false;
 
   for (let s = 0; s < stones.length; s++) {
     const stone = stones[s];
@@ -150,6 +161,7 @@ function resolveStoneCollisions(b: BallEntry, stones: CourtStone[], minSpeed: nu
     if (dot < 0) {
       b.vx.value = vx - 2 * dot * nx;
       b.vy.value = vy - 2 * dot * ny;
+      hit = true;
     }
   }
 
@@ -159,6 +171,8 @@ function resolveStoneCollisions(b: BallEntry, stones: CourtStone[], minSpeed: nu
     b.vx.value *= scale;
     b.vy.value *= scale;
   }
+
+  return hit;
 }
 
 function ballSpeedMagnitude(b: BallEntry): number {
@@ -166,9 +180,40 @@ function ballSpeedMagnitude(b: BallEntry): number {
   return Math.hypot(b.vx.value, b.vy.value);
 }
 
-function nextPaddleHitSpeed(b: BallEntry, m: ScaledMetrics): number {
+function nextPaddleHitSpeed(b: BallEntry, m: ScaledMetrics, speedMult: number): number {
   'worklet';
-  return Math.min(ballSpeedMagnitude(b) + m.ballSpeedIncrement, m.maxBallSpeed);
+  return Math.min(ballSpeedMagnitude(b) + m.ballSpeedIncrement, m.maxBallSpeed) * speedMult;
+}
+
+function applyCurve(b: BallEntry, dt: number, active: boolean): void {
+  'worklet';
+  if (!active) return;
+  const perpVx = -b.vy.value * 0.022;
+  const perpVy = b.vx.value * 0.022;
+  b.vx.value += perpVx * dt;
+  b.vy.value += perpVy * dt;
+}
+
+function stickyAttachFrames(): number {
+  'worklet';
+  return Math.max(1, Math.round(300 / 16.67));
+}
+
+function tryStickyAttach(
+  deps: PhysicsDeps,
+  b: BallEntry,
+  ballIndex: number,
+  side: 0 | 1,
+  stickyActive: boolean,
+): boolean {
+  'worklet';
+  if (!stickyActive || ballIndex !== 0) return false;
+  deps.ballAttached.value = true;
+  deps.ballAttachSide.value = side;
+  deps.attachCountdown.value = stickyAttachFrames();
+  b.vx.value = 0;
+  b.vy.value = 0;
+  return true;
 }
 
 function stepPortraitBall(
@@ -184,14 +229,22 @@ function stepPortraitBall(
 ): number {
   'worklet';
   const ballSize = b.size!.value;
-  const attachGap = 4 * (m.paddleWidth / 20);
+  const speedMult = deps.ballSpeedMultiplier.value;
+  const leftW = deps.leftPaddleWidth.value;
+  const rightW = deps.rightPaddleWidth.value;
 
   const centerStart = H * 0.35;
   const centerEnd = H * 0.65;
   const byCenter = b.y.value + ballSize / 2;
-  const zoneMult = byCenter > centerStart && byCenter < centerEnd ? 0.75 : 1.0;
-  b.x.value += b.vx.value * dt;
-  b.y.value += b.vy.value * dt * zoneMult;
+  const zoneMult =
+    deps.zoneMultDisabled.value > 0
+      ? 1.0
+      : byCenter > centerStart && byCenter < centerEnd
+        ? 0.75
+        : 1.0;
+  b.x.value += b.vx.value * dt * speedMult;
+  b.y.value += b.vy.value * dt * zoneMult * speedMult;
+  applyCurve(b, dt, deps.curveActive.value > 0);
 
   if (b.x.value <= 0) {
     b.x.value = 0;
@@ -201,7 +254,11 @@ function stepPortraitBall(
     b.vx.value = -Math.abs(b.vx.value);
   }
 
-  resolveStoneCollisions(b, deps.stonesSV.value, m.initialBallSpeed * 0.55);
+  if (
+    resolveStoneCollisions(b, deps.stonesSV.value, m.initialBallSpeed * 0.55)
+  ) {
+    runOnJS(callbacks.playStoneHit)();
+  }
 
   const ballCenterY = b.y.value + ballSize / 2;
   const ballCenterX = b.x.value + ballSize / 2;
@@ -209,18 +266,21 @@ function stepPortraitBall(
 
   if (
     b.vy.value < 0 &&
-    b.y.value <= deps.leftPaddleY.value + m.paddleWidth &&
+    b.y.value <= deps.leftPaddleY.value + leftW &&
     b.y.value + ballSize > deps.leftPaddleY.value &&
     b.x.value + ballSize > deps.leftPaddleX.value &&
     b.x.value < deps.leftPaddleX.value + deps.leftPaddleHeight.value
   ) {
+    if (tryStickyAttach(deps, b, i, 1, deps.leftSticky.value > 0)) {
+      return i;
+    }
     const relHit =
       (ballCenterX - (deps.leftPaddleX.value + deps.leftPaddleHeight.value / 2)) /
       (deps.leftPaddleHeight.value / 2);
-    const speed = nextPaddleHitSpeed(b, m);
+    const speed = nextPaddleHitSpeed(b, m, speedMult);
     b.vy.value = speed;
     b.vx.value = relHit * speed * 0.8;
-    b.y.value = deps.leftPaddleY.value + m.paddleWidth + 1;
+    b.y.value = deps.leftPaddleY.value + leftW + 1;
     deps.leftPaddleFlashSV.value = 1;
     runOnJS(callbacks.playPaddleHit)();
   }
@@ -228,14 +288,17 @@ function stepPortraitBall(
   if (
     b.vy.value > 0 &&
     b.y.value + ballSize >= deps.rightPaddleY.value &&
-    b.y.value < deps.rightPaddleY.value + m.paddleWidth &&
+    b.y.value < deps.rightPaddleY.value + rightW &&
     b.x.value + ballSize > deps.rightPaddleX.value &&
     b.x.value < deps.rightPaddleX.value + deps.rightPaddleHeight.value
   ) {
+    if (tryStickyAttach(deps, b, i, 0, deps.rightSticky.value > 0)) {
+      return i;
+    }
     const relHit =
       (ballCenterX - (deps.rightPaddleX.value + deps.rightPaddleHeight.value / 2)) /
       (deps.rightPaddleHeight.value / 2);
-    const speed = nextPaddleHitSpeed(b, m);
+    const speed = nextPaddleHitSpeed(b, m, speedMult);
     b.vy.value = -speed;
     b.vx.value = relHit * speed * 0.8;
     b.y.value = deps.rightPaddleY.value - ballSize - 1;
@@ -289,13 +352,22 @@ function stepLandscapeBall(
 ): number {
   'worklet';
   const ballSize = b.size!.value;
+  const speedMult = deps.ballSpeedMultiplier.value;
+  const leftW = deps.leftPaddleWidth.value;
+  const rightW = deps.rightPaddleWidth.value;
 
   const centerStart = W * 0.35;
   const centerEnd = W * 0.65;
   const bxCenter = b.x.value + ballSize / 2;
-  const zoneMult = bxCenter > centerStart && bxCenter < centerEnd ? 0.75 : 1.0;
-  b.x.value += b.vx.value * dt * zoneMult;
-  b.y.value += b.vy.value * dt;
+  const zoneMult =
+    deps.zoneMultDisabled.value > 0
+      ? 1.0
+      : bxCenter > centerStart && bxCenter < centerEnd
+        ? 0.75
+        : 1.0;
+  b.x.value += b.vx.value * dt * zoneMult * speedMult;
+  b.y.value += b.vy.value * dt * speedMult;
+  applyCurve(b, dt, deps.curveActive.value > 0);
 
   if (b.y.value <= 0) {
     b.y.value = 0;
@@ -305,7 +377,11 @@ function stepLandscapeBall(
     b.vy.value = -Math.abs(b.vy.value);
   }
 
-  resolveStoneCollisions(b, deps.stonesSV.value, m.initialBallSpeed * 0.55);
+  if (
+    resolveStoneCollisions(b, deps.stonesSV.value, m.initialBallSpeed * 0.55)
+  ) {
+    runOnJS(callbacks.playStoneHit)();
+  }
 
   const ballCenterY = b.y.value + ballSize / 2;
   const ballCenterX = b.x.value + ballSize / 2;
@@ -313,18 +389,21 @@ function stepLandscapeBall(
 
   if (
     b.vx.value < 0 &&
-    b.x.value <= deps.leftPaddleX.value + m.paddleWidth &&
+    b.x.value <= deps.leftPaddleX.value + leftW &&
     b.x.value + ballSize > deps.leftPaddleX.value &&
     b.y.value + ballSize > deps.leftPaddleY.value &&
     b.y.value < deps.leftPaddleY.value + deps.leftPaddleHeight.value
   ) {
+    if (tryStickyAttach(deps, b, i, 1, deps.leftSticky.value > 0)) {
+      return i;
+    }
     const relHit =
       (ballCenterY - (deps.leftPaddleY.value + deps.leftPaddleHeight.value / 2)) /
       (deps.leftPaddleHeight.value / 2);
-    const speed = nextPaddleHitSpeed(b, m);
+    const speed = nextPaddleHitSpeed(b, m, speedMult);
     b.vx.value = speed;
     b.vy.value = relHit * speed * 0.8;
-    b.x.value = deps.leftPaddleX.value + m.paddleWidth + 1;
+    b.x.value = deps.leftPaddleX.value + leftW + 1;
     deps.leftPaddleFlashSV.value = 1;
     runOnJS(callbacks.playPaddleHit)();
   }
@@ -332,14 +411,17 @@ function stepLandscapeBall(
   if (
     b.vx.value > 0 &&
     b.x.value + ballSize >= deps.rightPaddleX.value &&
-    b.x.value < deps.rightPaddleX.value + m.paddleWidth &&
+    b.x.value < deps.rightPaddleX.value + rightW &&
     b.y.value + ballSize > deps.rightPaddleY.value &&
     b.y.value < deps.rightPaddleY.value + deps.rightPaddleHeight.value
   ) {
+    if (tryStickyAttach(deps, b, i, 0, deps.rightSticky.value > 0)) {
+      return i;
+    }
     const relHit =
       (ballCenterY - (deps.rightPaddleY.value + deps.rightPaddleHeight.value / 2)) /
       (deps.rightPaddleHeight.value / 2);
-    const speed = nextPaddleHitSpeed(b, m);
+    const speed = nextPaddleHitSpeed(b, m, speedMult);
     b.vx.value = -speed;
     b.vy.value = relHit * speed * 0.8;
     b.x.value = deps.rightPaddleX.value - ballSize - 1;
@@ -427,6 +509,8 @@ export function stepBallPhysics(
       const ballSize = b.size!.value;
       const attachGap = 4 * (m.paddleWidth / 20);
       const offset = deps.ballAttachOffsetSV.value;
+      const leftW = deps.leftPaddleWidth.value;
+      const rightW = deps.rightPaddleWidth.value;
       if (portrait) {
         if (deps.ballAttachSide.value === 0) {
           b.x.value =
@@ -435,14 +519,14 @@ export function stepBallPhysics(
         } else {
           b.x.value =
             deps.leftPaddleX.value + deps.leftPaddleHeight.value / 2 - ballSize / 2 + offset;
-          b.y.value = deps.leftPaddleY.value + m.paddleWidth + attachGap;
+          b.y.value = deps.leftPaddleY.value + leftW + attachGap;
         }
       } else if (deps.ballAttachSide.value === 0) {
         b.x.value = deps.rightPaddleX.value - ballSize - attachGap;
         b.y.value =
           deps.rightPaddleY.value + deps.rightPaddleHeight.value / 2 - ballSize / 2 + offset;
       } else {
-        b.x.value = deps.leftPaddleX.value + m.paddleWidth + attachGap;
+        b.x.value = deps.leftPaddleX.value + leftW + attachGap;
         b.y.value =
           deps.leftPaddleY.value + deps.leftPaddleHeight.value / 2 - ballSize / 2 + offset;
       }

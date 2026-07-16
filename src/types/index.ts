@@ -29,6 +29,13 @@ export interface PaddleProps {
 
 export type ScoreBoardVariant = 'landscape' | 'portrait';
 
+export interface HudActiveEffect {
+  key: string;
+  label: string;
+  side: 'ai' | 'you';
+  expiresAt: number;
+}
+
 export interface ScoreBoardProps {
   aiScore: number;
   playerScore: number;
@@ -38,6 +45,7 @@ export interface ScoreBoardProps {
   isPaused?: boolean;
   onTogglePause?: () => void;
   difficulty?: AiDifficulty;
+  activeEffects?: HudActiveEffect[];
 }
 
 export interface CourtBounds {

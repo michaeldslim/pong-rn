@@ -14,7 +14,7 @@ import {
   HUD_PADDING_TOP,
   HUD_SCORE_FONT_SIZE,
 } from '../constants/hud';
-import type { ScoreBoardProps } from '../types';
+import type { HudActiveEffect, ScoreBoardProps } from '../types';
 
 function AnimatedScore({
   score,
@@ -43,6 +43,25 @@ function AnimatedScore({
   );
 }
 
+function EffectChips({
+  effects,
+  fontSize,
+}: {
+  effects: HudActiveEffect[];
+  fontSize: number;
+}) {
+  if (effects.length === 0) return null;
+  return (
+    <View style={styles.effectRow}>
+      {effects.map((effect) => (
+        <Text key={effect.key} style={[styles.effectChip, { fontSize }]}>
+          {effect.label}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
 export function ScoreBoard({
   aiScore,
   playerScore,
@@ -51,19 +70,30 @@ export function ScoreBoard({
   isPaused = false,
   onTogglePause,
   difficulty = 'medium',
+  activeEffects = [],
 }: ScoreBoardProps) {
   const labelSize = HUD_LABEL_FONT_SIZE * fontScale;
   const scoreSize = HUD_SCORE_FONT_SIZE * fontScale;
   const dividerSize = HUD_DIVIDER_FONT_SIZE * fontScale;
+  const chipSize = Math.max(9, 10 * fontScale);
   const pauseLabel = isPaused ? '▶' : '❚❚';
+
+  const aiEffects = activeEffects.filter((e) => e.side === 'ai');
+  const youEffects = activeEffects.filter((e) => e.side === 'you');
 
   const scoreRow = (
     <View style={styles.scoreRow}>
-      <Text style={[styles.label, { fontSize: labelSize }]}>AI</Text>
+      <View style={styles.sideColumn}>
+        <Text style={[styles.label, { fontSize: labelSize }]}>AI</Text>
+        <EffectChips effects={aiEffects} fontSize={chipSize} />
+      </View>
       <AnimatedScore score={aiScore} fontSize={scoreSize} />
       <Text style={[styles.divider, { fontSize: dividerSize }]}> : </Text>
       <AnimatedScore score={playerScore} fontSize={scoreSize} />
-      <Text style={[styles.label, { fontSize: labelSize }]}>You</Text>
+      <View style={styles.sideColumn}>
+        <Text style={[styles.label, { fontSize: labelSize }]}>You</Text>
+        <EffectChips effects={youEffects} fontSize={chipSize} />
+      </View>
     </View>
   );
 
@@ -145,6 +175,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  sideColumn: {
+    alignItems: 'center',
+    gap: 2,
+    minWidth: 36,
+  },
+  effectRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 3,
+    maxWidth: 72,
+  },
+  effectChip: {
+    color: 'rgba(255,255,255,0.7)',
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   label: {
     color: 'rgba(255,255,255,0.45)',

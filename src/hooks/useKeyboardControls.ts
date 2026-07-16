@@ -15,6 +15,7 @@ interface KeyboardControlOptions {
   courtH: SharedValue<number>;
   rightPaddleHeight: SharedValue<number>;
   paddleVerticalPadding: SharedValue<number>;
+  playerInputMultiplier: SharedValue<number>;
   onTogglePause: () => void;
 }
 
@@ -28,6 +29,7 @@ export function useKeyboardControls({
   courtH,
   rightPaddleHeight,
   paddleVerticalPadding,
+  playerInputMultiplier,
   onTogglePause,
 }: KeyboardControlOptions) {
   useEffect(() => {
@@ -39,23 +41,44 @@ export function useKeyboardControls({
     const tick = () => {
       if (!isPaused) {
         const pad = paddleVerticalPadding.value;
+        const inputMult = playerInputMultiplier.value;
         if (isPortrait) {
           const W = courtW.value;
           const len = rightPaddleHeight.value;
           if (pressed.has('ArrowLeft') || pressed.has('a') || pressed.has('A')) {
-            rightPaddleX.value = clampPaddleOrigin(rightPaddleX.value - PADDLE_KEY_SPEED, W, len, pad);
+            rightPaddleX.value = clampPaddleOrigin(
+              rightPaddleX.value - PADDLE_KEY_SPEED * inputMult,
+              W,
+              len,
+              pad,
+            );
           }
           if (pressed.has('ArrowRight') || pressed.has('d') || pressed.has('D')) {
-            rightPaddleX.value = clampPaddleOrigin(rightPaddleX.value + PADDLE_KEY_SPEED, W, len, pad);
+            rightPaddleX.value = clampPaddleOrigin(
+              rightPaddleX.value + PADDLE_KEY_SPEED * inputMult,
+              W,
+              len,
+              pad,
+            );
           }
         } else {
           const H = courtH.value;
           const len = rightPaddleHeight.value;
           if (pressed.has('ArrowUp') || pressed.has('w') || pressed.has('W')) {
-            rightPaddleY.value = clampPaddleOrigin(rightPaddleY.value - PADDLE_KEY_SPEED, H, len, pad);
+            rightPaddleY.value = clampPaddleOrigin(
+              rightPaddleY.value - PADDLE_KEY_SPEED * inputMult,
+              H,
+              len,
+              pad,
+            );
           }
           if (pressed.has('ArrowDown') || pressed.has('s') || pressed.has('S')) {
-            rightPaddleY.value = clampPaddleOrigin(rightPaddleY.value + PADDLE_KEY_SPEED, H, len, pad);
+            rightPaddleY.value = clampPaddleOrigin(
+              rightPaddleY.value + PADDLE_KEY_SPEED * inputMult,
+              H,
+              len,
+              pad,
+            );
           }
         }
       }
@@ -101,6 +124,7 @@ export function useKeyboardControls({
     courtH,
     rightPaddleHeight,
     paddleVerticalPadding,
+    playerInputMultiplier,
     onTogglePause,
   ]);
 }

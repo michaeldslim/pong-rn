@@ -90,3 +90,47 @@ export function generateCourtStones(
 
   return placed;
 }
+
+/** Place one temporary stone near the orb (powerup **O**). */
+export function placeTemporaryStone(
+  courtW: number,
+  courtH: number,
+  scale: number,
+  portrait: boolean,
+  metrics: StonePlacementMetrics,
+  existing: CourtStone[],
+  nearX: number,
+  nearY: number,
+  nextId: number,
+): CourtStone | null {
+  const radius = STONE_RADIUS_BASE * scale;
+  const { minX, maxX, minY, maxY } = placementBounds(courtW, courtH, radius, portrait, metrics);
+  if (maxX <= minX || maxY <= minY) return null;
+
+  for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
+    const spread = radius * 3;
+    const x = Math.max(minX, Math.min(maxX, nearX + (Math.random() * 2 - 1) * spread));
+    const y = Math.max(minY, Math.min(maxY, nearY + (Math.random() * 2 - 1) * spread));
+    if (!isValidPosition(x, y, radius, existing)) continue;
+    return { id: nextId, x, y, radius };
+  }
+
+  return null;
+}
+
+/** Remove the stone closest to `(x, y)` — powerup **X**. */
+export function removeNearestStone(stones: CourtStone[], x: number, y: number): CourtStone[] {
+  if (stones.length === 0) return stones;
+  let bestIdx = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < stones.length; i++) {
+    const dx = stones[i].x - x;
+    const dy = stones[i].y - y;
+    const dist = dx * dx + dy * dy;
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  }
+  return stones.filter((_, i) => i !== bestIdx);
+}
