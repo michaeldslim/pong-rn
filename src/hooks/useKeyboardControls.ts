@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import type { SharedValue } from 'react-native-reanimated';
+import { clampPaddleOrigin } from '../utils/paddleBounds';
 
 const PADDLE_KEY_SPEED = 9;
 
@@ -39,22 +40,22 @@ export function useKeyboardControls({
       if (!isPaused) {
         const pad = paddleVerticalPadding.value;
         if (isPortrait) {
-          const minX = pad;
-          const maxX = courtW.value - rightPaddleHeight.value - pad;
+          const W = courtW.value;
+          const len = rightPaddleHeight.value;
           if (pressed.has('ArrowLeft') || pressed.has('a') || pressed.has('A')) {
-            rightPaddleX.value = Math.max(minX, rightPaddleX.value - PADDLE_KEY_SPEED);
+            rightPaddleX.value = clampPaddleOrigin(rightPaddleX.value - PADDLE_KEY_SPEED, W, len, pad);
           }
           if (pressed.has('ArrowRight') || pressed.has('d') || pressed.has('D')) {
-            rightPaddleX.value = Math.min(maxX, rightPaddleX.value + PADDLE_KEY_SPEED);
+            rightPaddleX.value = clampPaddleOrigin(rightPaddleX.value + PADDLE_KEY_SPEED, W, len, pad);
           }
         } else {
-          const minY = pad;
-          const maxY = courtH.value - rightPaddleHeight.value - pad;
+          const H = courtH.value;
+          const len = rightPaddleHeight.value;
           if (pressed.has('ArrowUp') || pressed.has('w') || pressed.has('W')) {
-            rightPaddleY.value = Math.max(minY, rightPaddleY.value - PADDLE_KEY_SPEED);
+            rightPaddleY.value = clampPaddleOrigin(rightPaddleY.value - PADDLE_KEY_SPEED, H, len, pad);
           }
           if (pressed.has('ArrowDown') || pressed.has('s') || pressed.has('S')) {
-            rightPaddleY.value = Math.min(maxY, rightPaddleY.value + PADDLE_KEY_SPEED);
+            rightPaddleY.value = clampPaddleOrigin(rightPaddleY.value + PADDLE_KEY_SPEED, H, len, pad);
           }
         }
       }

@@ -40,3 +40,30 @@ export const ORIENTATION_RESET_DEBOUNCE_MS = 120;
 export const HUD_LABEL_FONT_SIZE = 13;
 export const HUD_SCORE_FONT_SIZE = 30;
 export const HUD_DIVIDER_FONT_SIZE = 22;
+
+/** Playboard background — selectable on intro screen. */
+export type CourtColorMode = 'classic' | 'random';
+
+export const COURT_COLOR_MODES: CourtColorMode[] = ['classic', 'random'];
+
+export const CLASSIC_COURT_COLOR = 'rgb(43,75,53)';
+
+/** Palette used when Board = Random (excludes classic green). */
+export const RANDOM_COURT_COLORS = [
+  '#000000',
+  '#1C2841',
+  '#3B1F5E',
+  '#4A1F2E',
+  '#1A3D3D',
+  '#2D3748',
+] as const;
+
+export const COURT_COLOR_MODE_LABELS: Record<CourtColorMode, string> = {
+  classic: 'Classic',
+  random: 'Random',
+};
+
+export function pickRandomCourtColor(): string {
+  const index = Math.floor(Math.random() * RANDOM_COURT_COLORS.length);
+  return RANDOM_COURT_COLORS[index];
+}

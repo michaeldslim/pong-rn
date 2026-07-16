@@ -13,6 +13,7 @@ import {
 import {
   useSharedValue,
   useFrameCallback,
+  runOnJS,
 } from 'react-native-reanimated';
 import type { FrameInfo } from 'react-native-reanimated';
 
@@ -31,6 +32,11 @@ import { Stone } from '../components/Stone';
 import { WinOverlay } from '../components/WinOverlay';
 import type { AiDifficulty, PowerupType } from '../constants/game';
 import { BALL_SIZE, PADDLE_HEIGHT, PADDLE_WIDTH, POWERUP_MAX, POWERUP_LIFETIME } from '../constants/game';
+import {
+  CLASSIC_COURT_COLOR,
+  pickRandomCourtColor,
+  type CourtColorMode,
+} from '../constants/hud';
 import { useGameplayOrientationLock } from '../hooks/useGameplayOrientationLock';
 import { useKeyboardControls } from '../hooks/useKeyboardControls';
 import { useOrientation } from '../hooks/useOrientation';
@@ -38,7 +44,16 @@ import type { BallEntry, PhysicsCallbacks, PhysicsDeps, ScaledMetrics } from '..
 import { stepBallPhysics } from '../physics/ballPhysics';
 import type { CourtBounds } from '../types';
 import { buildLayoutConfig, computeCourtMetrics } from '../utils/courtMetrics';
+import {
+  computeAttachedBallPosition,
+  OPENING_SERVE_SIDE,
+  PLAYER_SERVE_SIDE,
+  randomLaunchVelocity,
+  randomPaddleAttachOffset,
+  serveSideAfterScore,
+} from '../utils/ballLaunch';
 import { generateCourtStones, type CourtStone } from '../utils/stones';
+import { clampPaddleOrigin } from '../utils/paddleBounds';
 
 const DEFAULT_METRICS: ScaledMetrics = {
   paddleWidth: PADDLE_WIDTH,
@@ -52,6 +67,8 @@ const DEFAULT_METRICS: ScaledMetrics = {
   powerupRadius: 16,
 };
 
+const TRAIL_HIDDEN_POS = -10000;
+
 export function GameScreen() {
   const [aiScore, setAiScore] = useState(0);
   const [playerScore, setPlayerScore] = useState(0);
@@ -59,6 +76,8 @@ export function GameScreen() {
   const [gameStarted, setGameStarted] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [difficulty, setDifficulty] = useState<AiDifficulty>('medium');
+  const [courtColorMode, setCourtColorMode] = useState<CourtColorMode>('classic');
+  const [courtBackgroundColor, setCourtBackgroundColor] = useState(CLASSIC_COURT_COLOR);
   const [courtBounds, setCourtBounds] = useState<CourtBounds | null>(null);
   const [powerupRadius, setPowerupRadius] = useState(16);
   const [lockedGameplayPortrait, setLockedGameplayPortrait] = useState<boolean | null>(null);
@@ -75,6 +94,18 @@ export function GameScreen() {
     setWinner(w);
     setIsPaused(false);
   }, []);
+
+  const applyCourtColor = useCallback((mode: CourtColorMode) => {
+    setCourtBackgroundColor(mode === 'classic' ? CLASSIC_COURT_COLOR : pickRandomCourtColor());
+  }, []);
+
+  const handleCourtColorModeChange = useCallback(
+    (mode: CourtColorMode) => {
+      setCourtColorMode(mode);
+      applyCourtColor(mode);
+    },
+    [applyCourtColor],
+  );
 
   const paddleSoundRef = useRef<Sound | null>(null);
   useEffect(() => {
@@ -137,6 +168,7 @@ export function GameScreen() {
   const ballAttached = useSharedValue(false);
   const attachCountdown = useSharedValue(0);
   const ballAttachSide = useSharedValue(0);
+  const ballAttachOffsetSV = useSharedValue(0);
   const isPortraitSV = useSharedValue(isPortrait ? 1 : 0);
   const metricsSV = useSharedValue<ScaledMetrics>(DEFAULT_METRICS);
   const stonesSV = useSharedValue<CourtStone[]>([]);
@@ -145,6 +177,7 @@ export function GameScreen() {
   const [ballsVersion, setBallsVersion] = useState(0);
   const bumpBalls = useCallback(() => setBallsVersion((v) => v + 1), []);
   const attachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingServeSideRef = useRef<0 | 1 | null>(null);
 
   const clearAttachTimer = useCallback(() => {
     if (attachTimerRef.current) {
@@ -294,22 +327,41 @@ export function GameScreen() {
   }, []);
 
   const positionPaddles = useCallback((width: number, height: number, portrait: boolean, metrics: ScaledMetrics) => {
+    const pad = paddleVerticalPaddingSV.value;
     if (portrait) {
       const topY = metrics.paddleMargin;
       const bottomY = height - metrics.paddleMargin - metrics.paddleWidth;
-      const centerX = width / 2 - metrics.paddleHeight / 2;
-      leftPaddleX.value = centerX;
+      leftPaddleX.value = clampPaddleOrigin(
+        width / 2 - leftPaddleHeight.value / 2,
+        width,
+        leftPaddleHeight.value,
+        pad,
+      );
       leftPaddleY.value = topY;
-      rightPaddleX.value = centerX;
+      rightPaddleX.value = clampPaddleOrigin(
+        width / 2 - rightPaddleHeight.value / 2,
+        width,
+        rightPaddleHeight.value,
+        pad,
+      );
       rightPaddleY.value = bottomY;
       return;
     }
 
     leftPaddleX.value = metrics.paddleMargin;
     rightPaddleX.value = width - metrics.paddleMargin - metrics.paddleWidth;
-    const py = height / 2 - metrics.paddleHeight / 2;
-    leftPaddleY.value = py;
-    rightPaddleY.value = py;
+    leftPaddleY.value = clampPaddleOrigin(
+      height / 2 - leftPaddleHeight.value / 2,
+      height,
+      leftPaddleHeight.value,
+      pad,
+    );
+    rightPaddleY.value = clampPaddleOrigin(
+      height / 2 - rightPaddleHeight.value / 2,
+      height,
+      rightPaddleHeight.value,
+      pad,
+    );
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const placeBallOnHumanPaddle = useCallback((width: number, height: number, portrait: boolean, metrics: ScaledMetrics) => {
@@ -334,32 +386,76 @@ export function GameScreen() {
     clearAttachTimer();
   }, [isPortrait, clearAttachTimer]);
 
+  const clearBallTrail = useCallback(() => {
+    'worklet';
+    trail0X.value = TRAIL_HIDDEN_POS;
+    trail0Y.value = TRAIL_HIDDEN_POS;
+    trail1X.value = TRAIL_HIDDEN_POS;
+    trail1Y.value = TRAIL_HIDDEN_POS;
+    trail2X.value = TRAIL_HIDDEN_POS;
+    trail2Y.value = TRAIL_HIDDEN_POS;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const hideBallTrail = useCallback(() => {
+    trail0X.value = TRAIL_HIDDEN_POS;
+    trail0Y.value = TRAIL_HIDDEN_POS;
+    trail1X.value = TRAIL_HIDDEN_POS;
+    trail1Y.value = TRAIL_HIDDEN_POS;
+    trail2X.value = TRAIL_HIDDEN_POS;
+    trail2Y.value = TRAIL_HIDDEN_POS;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const releaseAttachedBall = useCallback(() => {
+    if (!ballAttached.value) return;
+    clearAttachTimer();
+
+    const portrait = isPortraitRef.current;
+    const m = metricsSV.value;
+    const side: 0 | 1 = ballAttachSide.value === 1 ? 1 : 0;
+    const b = ballsRef.current[0];
+    if (!b) return;
+
+    const vel = randomLaunchVelocity(portrait, side, m.initialBallSpeed);
+    b.vx.value = vel.vx;
+    b.vy.value = vel.vy;
+    ballAttached.value = false;
+    attachCountdown.value = 0;
+  }, [clearAttachTimer]);
+
   const launchBall = useCallback((side: 0 | 1, attach = true, attachMs = 500) => {
     ensurePrimaryBall();
+    clearAttachTimer();
+    hideBallTrail();
     const portrait = isPortraitRef.current;
     const m = metricsSV.value;
     ballAttachSide.value = side;
     const b = ballsRef.current[0];
     if (!b) return;
 
-    clearAttachTimer();
+    const attachPaddleLength = side === 0 ? rightPaddleHeight.value : leftPaddleHeight.value;
+    ballAttachOffsetSV.value = randomPaddleAttachOffset(attachPaddleLength, primaryBSIZE.value);
 
-    const releaseBall = () => {
-      const spd = m.initialBallSpeed * 1.4;
-      if (portrait) {
-        const vx = (Math.random() * 2 - 1) * spd * 0.45;
-        b.vy.value = side === 0 ? -spd : spd;
-        b.vx.value = vx;
-      } else {
-        const vy = (Math.random() * 2 - 1) * spd * 0.45;
-        b.vx.value = side === 0 ? -spd : spd;
-        b.vy.value = vy;
-      }
-      ballAttached.value = false;
-    };
+    const gap = 4 * (m.paddleWidth / PADDLE_WIDTH);
+    const attached = computeAttachedBallPosition(
+      portrait,
+      side,
+      primaryBSIZE.value,
+      m.paddleWidth,
+      gap,
+      ballAttachOffsetSV.value,
+      { x: leftPaddleX.value, y: leftPaddleY.value, length: leftPaddleHeight.value },
+      { x: rightPaddleX.value, y: rightPaddleY.value, length: rightPaddleHeight.value },
+    );
+    primaryBX.value = attached.x;
+    primaryBY.value = attached.y;
+    bumpBalls();
 
     if (!attach) {
-      releaseBall();
+      const vel = randomLaunchVelocity(portrait, side, m.initialBallSpeed);
+      b.vx.value = vel.vx;
+      b.vy.value = vel.vy;
+      ballAttached.value = false;
+      attachCountdown.value = 0;
       return;
     }
 
@@ -367,11 +463,95 @@ export function GameScreen() {
     b.vx.value = 0;
     b.vy.value = 0;
     attachCountdown.value = Math.max(1, Math.round(attachMs / 16.67));
-    attachTimerRef.current = setTimeout(() => {
-      attachTimerRef.current = null;
-      if (ballAttached.value) releaseBall();
-    }, attachMs);
-  }, [clearAttachTimer, ensurePrimaryBall]);
+    attachTimerRef.current = setTimeout(() => releaseAttachedBall(), attachMs);
+  }, [clearAttachTimer, ensurePrimaryBall, bumpBalls, releaseAttachedBall, hideBallTrail]);
+
+  const tryLaunchPlayerServe = useCallback(() => {
+    if (isPausedSV.value || !isPlaying.value) return;
+    if (!ballAttached.value || ballAttachSide.value !== PLAYER_SERVE_SIDE) return;
+    releaseAttachedBall();
+  }, [releaseAttachedBall]);
+
+  const resolveCourtSize = useCallback(
+    (portrait: boolean): { width: number; height: number } | null => {
+      const measuredW = courtW.value;
+      const measuredH = courtH.value;
+      if (measuredW > 0 && measuredH > 0) {
+        return { width: measuredW, height: measuredH };
+      }
+      if (portrait && layoutConfig.portraitCourtSize) {
+        return layoutConfig.portraitCourtSize;
+      }
+      return null;
+    },
+    [layoutConfig.portraitCourtSize],
+  );
+
+  const beginMatch = useCallback(
+    (serveSide: 0 | 1, attachMs = 3000) => {
+      const portrait = isPortraitRef.current;
+      const size = resolveCourtSize(portrait);
+      if (!size) {
+        pendingServeSideRef.current = serveSide;
+        setLockedGameplayPortrait(portrait);
+        applyCourtColor(courtColorMode);
+        return;
+      }
+
+      const { width: W, height: H } = size;
+      courtW.value = W;
+      courtH.value = H;
+      pendingServeSideRef.current = null;
+
+      const metrics = syncCourtMetrics(W, H, portrait);
+      regenerateStones(W, H, portrait);
+      applyCourtColor(courtColorMode);
+
+      winnerRef.current = null;
+      gameStartedRef.current = true;
+
+      setGameStarted(true);
+      setWinner(null);
+      setIsPaused(false);
+      setLockedGameplayPortrait(portrait);
+
+      leftPaddleHeight.value = metrics.paddleHeight;
+      rightPaddleHeight.value = metrics.paddleHeight;
+      positionPaddles(W, H, portrait, metrics);
+      ensurePrimaryBall();
+      isPlaying.value = true;
+      bumpBalls();
+      attachCountdown.value = 0;
+      launchBall(serveSide, true, attachMs);
+    },
+    [
+      resolveCourtSize,
+      syncCourtMetrics,
+      regenerateStones,
+      applyCourtColor,
+      courtColorMode,
+      positionPaddles,
+      ensurePrimaryBall,
+      bumpBalls,
+      launchBall,
+    ],
+  );
+
+  const clampPaddlesToCourt = useCallback(() => {
+    const pad = paddleVerticalPaddingSV.value;
+    const portrait = isPortraitRef.current;
+    const W = courtW.value;
+    const H = courtH.value;
+    if (W <= 0 || H <= 0) return;
+
+    if (portrait) {
+      leftPaddleX.value = clampPaddleOrigin(leftPaddleX.value, W, leftPaddleHeight.value, pad);
+      rightPaddleX.value = clampPaddleOrigin(rightPaddleX.value, W, rightPaddleHeight.value, pad);
+    } else {
+      leftPaddleY.value = clampPaddleOrigin(leftPaddleY.value, H, leftPaddleHeight.value, pad);
+      rightPaddleY.value = clampPaddleOrigin(rightPaddleY.value, H, rightPaddleHeight.value, pad);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateCourtBounds = useCallback((bounds: CourtBounds) => {
     setCourtBounds((prev) => {
@@ -397,26 +577,31 @@ export function GameScreen() {
       courtH.value = height;
       updateCourtBounds({ x, y, width, height });
 
-      if (!gameStartedRef.current || winnerRef.current !== null) {
+      if (pendingServeSideRef.current !== null && width > 0 && height > 0) {
+        const serveSide = pendingServeSideRef.current;
+        beginMatch(serveSide, 3000);
+        return;
+      }
+
+      const activeMatch = isPlaying.value && winnerRef.current === null;
+
+      if (!activeMatch) {
+        leftPaddleHeight.value = metrics.paddleHeight;
+        rightPaddleHeight.value = metrics.paddleHeight;
         positionPaddles(width, height, portrait, metrics);
+        clampPaddlesToCourt();
         regenerateStones(width, height, portrait);
         if (!isPlaying.value) {
           placeBallOnHumanPaddle(width, height, portrait, metrics);
           primaryBVX.value = 0;
           primaryBVY.value = 0;
           ensurePrimaryBall();
+          bumpBalls();
         }
         return;
       }
 
-      positionPaddles(width, height, portrait, metrics);
-
-      if (!isPlaying.value) {
-        placeBallOnHumanPaddle(width, height, portrait, metrics);
-        primaryBVX.value = 0;
-        primaryBVY.value = 0;
-        ensurePrimaryBall();
-      }
+      clampPaddlesToCourt();
     },
     [
       placeBallOnHumanPaddle,
@@ -425,6 +610,9 @@ export function GameScreen() {
       ensurePrimaryBall,
       regenerateStones,
       updateCourtBounds,
+      clampPaddlesToCourt,
+      bumpBalls,
+      beginMatch,
     ],
   );
 
@@ -434,23 +622,30 @@ export function GameScreen() {
 
   const applyPowerup = useCallback((pu: { id: number; x: number; y: number; type: PowerupType }, collector: 'AI' | 'You') => {
     const base = basePaddleHeightRef.current;
+    const revertPaddle = (target: 'left' | 'right') => {
+      if (target === 'left') leftPaddleHeight.value = base;
+      else rightPaddleHeight.value = base;
+      clampPaddlesToCourt();
+    };
+
     if (pu.type === 'grow') {
       if (collector === 'You') {
         rightPaddleHeight.value = base * 1.5;
-        setTimeout(() => { rightPaddleHeight.value = base; }, 5000);
+        setTimeout(() => revertPaddle('right'), 5000);
       } else {
         leftPaddleHeight.value = base * 1.5;
-        setTimeout(() => { leftPaddleHeight.value = base; }, 5000);
+        setTimeout(() => revertPaddle('left'), 5000);
       }
     } else if (collector === 'You') {
       rightPaddleHeight.value = base * 0.6;
-      setTimeout(() => { rightPaddleHeight.value = base; }, 5000);
+      setTimeout(() => revertPaddle('right'), 5000);
     } else {
       leftPaddleHeight.value = base * 0.6;
-      setTimeout(() => { leftPaddleHeight.value = base; }, 5000);
+      setTimeout(() => revertPaddle('left'), 5000);
     }
+    clampPaddlesToCourt();
     removePowerup(pu.id);
-  }, [removePowerup]);
+  }, [removePowerup, clampPaddlesToCourt]);
 
   const checkPowerups = useCallback((
     ballCenterX: number,
@@ -488,6 +683,7 @@ export function GameScreen() {
     ballAttached,
     attachCountdown,
     ballAttachSide,
+    ballAttachOffsetSV,
     isPlaying,
     aiScoreSV,
     playerScoreSV,
@@ -505,7 +701,8 @@ export function GameScreen() {
     setAiScore,
     recordWinner,
     launchBall,
-  }), [playPaddleHit, checkPowerups, bumpBalls, recordWinner, launchBall]);
+    releaseAttachedBall,
+  }), [playPaddleHit, checkPowerups, bumpBalls, recordWinner, launchBall, releaseAttachedBall]);
 
   const updateBallTrail = useCallback((bx: number, by: number) => {
     'worklet';
@@ -529,7 +726,18 @@ export function GameScreen() {
 
     const primary = ballsRef.current[0];
     if (primary && !ballAttached.value) {
-      updateBallTrail(primary.x.value, primary.y.value);
+      const bx = primary.x.value;
+      const by = primary.y.value;
+      const sz = primary.size?.value ?? BALL_SIZE;
+      const W = courtW.value;
+      const H = courtH.value;
+      if (bx + sz < 0 || by + sz < 0 || bx > W || by > H) {
+        clearBallTrail();
+      } else {
+        updateBallTrail(bx, by);
+      }
+    } else {
+      clearBallTrail();
     }
   });
 
@@ -538,27 +746,56 @@ export function GameScreen() {
   const panGesture = Gesture.Pan()
     .minDistance(0)
     .onBegin(() => {
+      'worklet';
       if (isPausedSV.value) return;
+      const pad = paddleVerticalPaddingSV.value;
       if (isPortraitSV.value) {
+        const W = courtW.value;
+        const len = rightPaddleHeight.value;
+        const min = pad;
+        const max = Math.max(min, W - len - pad);
+        rightPaddleX.value = Math.max(min, Math.min(max, rightPaddleX.value));
         paddleDragStart.value = rightPaddleX.value;
       } else {
+        const H = courtH.value;
+        const len = rightPaddleHeight.value;
+        const min = pad;
+        const max = Math.max(min, H - len - pad);
+        rightPaddleY.value = Math.max(min, Math.min(max, rightPaddleY.value));
         paddleDragStart.value = rightPaddleY.value;
       }
     })
     .onUpdate((e: GestureUpdateEvent<PanGestureHandlerEventPayload>) => {
+      'worklet';
       if (isPausedSV.value) return;
       const pad = paddleVerticalPaddingSV.value;
       if (isPortraitSV.value) {
-        const minX = pad;
-        const maxX = courtW.value - rightPaddleHeight.value - pad;
-        rightPaddleX.value = Math.max(minX, Math.min(maxX, paddleDragStart.value + e.translationX));
+        const W = courtW.value;
+        const len = rightPaddleHeight.value;
+        const min = pad;
+        const max = Math.max(min, W - len - pad);
+        rightPaddleX.value = Math.max(min, Math.min(max, paddleDragStart.value + e.translationX));
         return;
       }
 
-      const minY = pad;
-      const maxY = courtH.value - rightPaddleHeight.value - pad;
-      rightPaddleY.value = Math.max(minY, Math.min(maxY, paddleDragStart.value + e.translationY));
+      const H = courtH.value;
+      const len = rightPaddleHeight.value;
+      const min = pad;
+      const max = Math.max(min, H - len - pad);
+      rightPaddleY.value = Math.max(min, Math.min(max, paddleDragStart.value + e.translationY));
     });
+
+  const tapToServeGesture = Gesture.Tap()
+    .maxDuration(250)
+    .maxDistance(12)
+    .onEnd((_e, success) => {
+      'worklet';
+      if (success) {
+        runOnJS(tryLaunchPlayerServe)();
+      }
+    });
+
+  const courtGestures = Gesture.Simultaneous(panGesture, tapToServeGesture);
 
   const togglePause = useCallback(() => {
     if (!gameStartedRef.current || winnerRef.current) return;
@@ -581,56 +818,17 @@ export function GameScreen() {
   });
 
   const playAgain = useCallback(() => {
-    const W = courtW.value;
-    const H = courtH.value;
-    const portrait = isPortraitRef.current;
     const lastWinner = winnerRef.current;
-    const metrics = syncCourtMetrics(W, H, portrait);
-    regenerateStones(W, H, portrait);
     aiScoreSV.value = 0;
     playerScoreSV.value = 0;
-    positionPaddles(W, H, portrait, metrics);
-    leftPaddleHeight.value = metrics.paddleHeight;
-    rightPaddleHeight.value = metrics.paddleHeight;
     setAiScore(0);
     setPlayerScore(0);
-    winnerRef.current = null;
-    setWinner(null);
-    setIsPaused(false);
-    setLockedGameplayPortrait(portrait);
-    placeBallOnHumanPaddle(W, H, portrait, metrics);
-    primaryBVX.value = 0;
-    primaryBVY.value = 0;
-    ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
-    isPlaying.value = true;
-    bumpBalls();
-    ballAttached.value = false;
-    attachCountdown.value = 0;
-    launchBall(lastWinner === 'You' ? 0 : 1, true, 3000);
-  }, [launchBall, placeBallOnHumanPaddle, positionPaddles, bumpBalls, syncCourtMetrics, regenerateStones]);
+    beginMatch(serveSideAfterScore(lastWinner === 'You'), 3000);
+  }, [beginMatch]);
 
   const startGame = useCallback(() => {
-    const W = courtW.value;
-    const H = courtH.value;
-    const portrait = isPortraitRef.current;
-    const metrics = syncCourtMetrics(W, H, portrait);
-    regenerateStones(W, H, portrait);
-    setGameStarted(true);
-    setIsPaused(false);
-    setLockedGameplayPortrait(portrait);
-    positionPaddles(W, H, portrait, metrics);
-    leftPaddleHeight.value = metrics.paddleHeight;
-    rightPaddleHeight.value = metrics.paddleHeight;
-    placeBallOnHumanPaddle(W, H, portrait, metrics);
-    primaryBVX.value = 0;
-    primaryBVY.value = 0;
-    ballsRef.current = [{ x: primaryBX, y: primaryBY, vx: primaryBVX, vy: primaryBVY, size: primaryBSIZE }];
-    isPlaying.value = true;
-    bumpBalls();
-    ballAttached.value = false;
-    attachCountdown.value = 0;
-    launchBall(0, true, 3000);
-  }, [launchBall, placeBallOnHumanPaddle, positionPaddles, bumpBalls, syncCourtMetrics, regenerateStones]);
+    beginMatch(OPENING_SERVE_SIDE, 3000);
+  }, [beginMatch]);
 
   const powerupSize = powerupRadius * 2;
   const showCourtOverlay = !gameStarted || winner !== null || isPaused;
@@ -713,7 +911,7 @@ export function GameScreen() {
               height: layoutConfig.portraitCourtSize.height,
             }
           : null,
-        { backgroundColor: 'rgb(43,75,53)' },
+        { backgroundColor: courtBackgroundColor },
       ]}
       onLayout={handleLayout}
     >
@@ -737,7 +935,7 @@ export function GameScreen() {
       )}
 
       <View style={styles.playArea}>
-        <GestureDetector gesture={panGesture}>
+        <GestureDetector gesture={courtGestures}>
           <View style={[styles.playAreaInner, isPortrait && styles.portraitPlayArea]}>
             {courtView}
           </View>
@@ -761,6 +959,8 @@ export function GameScreen() {
               onStart={startGame}
               difficulty={difficulty}
               onDifficultyChange={setDifficulty}
+              courtColorMode={courtColorMode}
+              onCourtColorModeChange={handleCourtColorModeChange}
               compact={overlayCompact}
             />
           </CourtOverlayFrame>
@@ -772,6 +972,8 @@ export function GameScreen() {
               onStart={startGame}
               difficulty={difficulty}
               onDifficultyChange={setDifficulty}
+              courtColorMode={courtColorMode}
+              onCourtColorModeChange={handleCourtColorModeChange}
               compact={overlayCompact}
             />
           </View>

@@ -1,6 +1,7 @@
 import type { SharedValue } from 'react-native-reanimated';
 import type { ReactNode } from 'react';
 import type { AiDifficulty } from '../constants/game';
+import type { CourtColorMode } from '../constants/hud';
 
 export interface BallProps {
   ballX: SharedValue<number>;
@@ -55,6 +56,8 @@ export interface StartOverlayProps {
   onStart: () => void;
   difficulty: AiDifficulty;
   onDifficultyChange: (difficulty: AiDifficulty) => void;
+  courtColorMode: CourtColorMode;
+  onCourtColorModeChange: (mode: CourtColorMode) => void;
   /** Use tighter layout for short landscape courts. */
   compact?: boolean;
 }

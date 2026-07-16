@@ -3,6 +3,7 @@ import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reani
 import { BALL_SIZE } from '../constants/game';
 import type { BallProps } from '../types';
 
+const TRAIL_HIDDEN_POS = -10000;
 const TRAIL_OPACITIES = [0.22, 0.12, 0.06];
 
 function TrailDot({
@@ -18,6 +19,7 @@ function TrailDot({
 }) {
   const style = useAnimatedStyle(() => {
     const s = typeof sizeSV === 'number' ? sizeSV : sizeSV.value * 0.85;
+    const hidden = trailX.value <= TRAIL_HIDDEN_POS + 1;
     return {
       transform: [
         { translateX: trailX.value },
@@ -26,6 +28,7 @@ function TrailDot({
       width: s,
       height: s,
       borderRadius: s / 2,
+      opacity: hidden ? 0 : opacity,
     };
   });
 
@@ -37,7 +40,7 @@ function TrailDot({
           position: 'absolute',
           top: 0,
           left: 0,
-          backgroundColor: `rgba(255,255,255,${opacity})`,
+          backgroundColor: '#FFFFFF',
         },
         style,
       ]}
