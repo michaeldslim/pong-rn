@@ -35,6 +35,16 @@ Powerups spawn on court during play (~every 8s, max 5, 6s lifetime). Each is a *
 
 Spawn bias ~60% Grow / 40% Shrink. Constants: `POWERUP_LABELS`, `POWERUP_COLORS`, `POWERUP_MAX`, `POWERUP_LIFETIME` in `src/constants/game.ts`. Component: `src/components/Powerup.tsx`.
 
+### Serve rule
+
+| Rule | Behavior |
+|------|----------|
+| **Opening serve** | **Player (You)** always serves first — `OPENING_SERVE_SIDE` / `PLAYER_SERVE_SIDE` = `0` in `ballLaunch.ts` |
+| **After a point** | Scorer serves — `serveSideAfterScore()` (player = side `0`, AI = side `1`) |
+| **Attach delay** | Ball sticks to serving paddle **3 s** (1 s after AI scores), then auto-launches |
+| **Tap to serve** | On **player serve only** (`ballAttachSide === 0`): quick tap on court launches early (`Gesture.Tap` + `tryLaunchPlayerServe`) |
+| **Launch angle** | Random cross-court component + random offset along paddle edge; velocity computed on **JS thread** (`randomLaunchVelocity`, `releaseAttachedBall`) |
+
 ### Orientation rule
 
 | Screen state | Rotation |
@@ -45,6 +55,20 @@ Spawn bias ~60% Grow / 40% Shrink. Constants: `POWERUP_LABELS`, `POWERUP_COLORS`
 | Pause overlay | Locked (still in active match) |
 
 Mid-game live relayout was removed after device QA showed broken paddle positions and missing balls. `expo-screen-orientation` locks the device during play; a `RotationLockedBanner` appears (with brief auto-pause) if the player physically rotates the device.
+
+### Court color rule
+
+| Mode | Behavior |
+|------|----------|
+| **Classic** (default) | `rgb(43,75,53)` — original green playboard |
+| **Random** | Picks one color from `RANDOM_COURT_COLORS` in `hud.ts` |
+
+**Random palette:** black, navy, purple, burgundy, teal, charcoal (`#000000`, `#1C2841`, `#3B1F5E`, `#4A1F2E`, `#1A3D3D`, `#2D3748`).
+
+- Toggle on **intro only** (`StartOverlay` — **Board** row: Classic vs Random)
+- State: `courtColorMode` + `courtBackgroundColor` in `GameScreen`; `pickRandomCourtColor()` in `hud.ts`
+- **Random** rolls on intro select, **Start Game**, and **Play Again** (new color each match)
+- **Classic** always uses green; not changeable mid-match or on win overlay
 
 ---
 
@@ -58,19 +82,21 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 | Phase4 | **Done** | Portrait court sizing, top/bottom paddle physics |
 | Phase5 | **Done** | Court-framed overlays; intro rotation; mid-game lock replaces live restart |
 | Phase6 | **Done** | Scaling, difficulty, haptics, trail/flash, pause HUD, score animation, status bar, code health, tablet/web |
-| Phase7 | **Done** | Labeled powerups (G/S), court stones with random placement + ball reflection |
+| Phase7 | **Done** | Powerups, random stones, serve/tap-launch, trail fix, paddle bounds (player + AI) |
 | Phase8 | **Planned** | Expanded powerup roster, tactical modifiers, HUD active-effect summary |
 
 ### Key files
 
 | File | Role |
 |------|------|
-| `src/screens/GameScreen.tsx` | Layout, physics hookup, pause/difficulty, overlay visibility, rotation banner |
+| `src/screens/GameScreen.tsx` | Layout, physics, powerups/stones, tap-to-serve, paddle clamp, trail clear, overlays |
 | `src/hooks/useGameplayOrientationLock.ts` | Lock/unlock orientation; accelerometer tilt detect; dimension fallback |
-| `src/physics/ballPhysics.ts` | Portrait/landscape ball + paddle collision loop; stone reflection (worklet) |
+| `src/physics/ballPhysics.ts` | Ball + paddle collisions; stone bounce; `updateAiPaddle()` every frame |
 | `src/utils/courtMetrics.ts` | Proportional scaling, `LayoutConfig`, tablet sizing |
-| `src/utils/stones.ts` | Random court-stone placement (count + position, paddle-safe) |
-| `src/hooks/useKeyboardControls.ts` | Web arrow/WASD paddle + Space/P pause |
+| `src/utils/stones.ts` | Random court-stone placement (3–4, paddle-safe) |
+| `src/utils/ballLaunch.ts` | Serve sides, random launch velocity, attach position, paddle offset |
+| `src/utils/paddleBounds.ts` | `clampPaddleOrigin()` — keep full paddle inside court on movable axis |
+| `src/hooks/useKeyboardControls.ts` | Web arrow/WASD paddle + Space/P pause (uses paddle clamp) |
 | `src/hooks/useOrientation.ts` | `{ isPortrait, isLandscape, width, height }` |
 | `src/components/CourtOverlayFrame.tsx` | Positions start/win/pause overlays to measured court bounds |
 | `src/components/StartOverlay.tsx` | Pre-game overlay + difficulty picker (`compact` for landscape) |
@@ -79,10 +105,10 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 | `src/components/RotationLockedBanner.tsx` | Bottom gold-bordered banner; safe-area padded; auto-dismiss |
 | `src/components/ScoreBoard.tsx` | `variant: 'landscape' \| 'portrait'`, pause, score pop animation |
 | `src/components/Paddle.tsx` | `horizontal` prop, scaled thickness, hit flash |
-| `src/components/Ball.tsx` | Scaled size + motion trail ghosts |
+| `src/components/Ball.tsx` | Scaled size + trail ghosts (hidden when off-court / cleared on serve) |
 | `src/components/Powerup.tsx` | Labeled powerup orbs (first-letter + color); tap to collect |
 | `src/components/Stone.tsx` | Gray court obstacles (visual only; physics in worklet) |
-| `src/constants/hud.ts` | HUD sizes, court aspect ratios, margins, tablet constants |
+| `src/constants/hud.ts` | HUD sizes, court aspect ratios, margins, tablet constants, **court color** (`CourtColorMode`, `RANDOM_COURT_COLORS`, `pickRandomCourtColor`) |
 | `src/constants/game.ts` | `WIN_SCORE`, paddle/ball sizes, `AI_SPEED_BY_DIFFICULTY`, powerup + stone tuning |
 | `src/types/index.ts` | `CourtBounds`, overlay prop types |
 | `app.json` | `"orientation": "default"`, `expo-screen-orientation` plugin; Android hidden status bar |
@@ -96,21 +122,24 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 | Area | Today |
 |------|-------|
 | Orientation | Free on intro/win; **locked during play** via `useGameplayOrientationLock` + `expo-screen-orientation` |
-| Court | Landscape: `flex: 1` + 5% margins. Portrait: fixed `portraitCourtSize` (9:16, max 85% below HUD) |
+| Court | Landscape: `flex: 1` + 5% margins. Portrait: fixed `portraitCourtSize` (9:16, max 85% below HUD). **Color:** Classic green or Random palette — intro toggle |
 | HUD | Landscape: `ScoreBoard variant="landscape"` top-center on court (hidden during overlays). Portrait: `variant="portrait"` bar above `playArea` with top safe-area |
 | Physics | `stepBallPhysics` in `ballPhysics.ts`; driven from `useFrameCallback` via `isPortraitSV` |
 | Gestures | Portrait: bottom paddle on **X**. Landscape: right paddle on **Y** |
 | Rotation | Intro/win: `courtBounds` cleared + remeasured on rotate. Play: device locked; `RotationLockedBanner` on physical tilt |
 | Overlays | Portrait: `CourtOverlayFrame` + `courtBounds`. Landscape menus: `fullScreenOverlay` on `playArea` |
 | Rotation banner | Pauses match while visible (~4s); auto-resumes; hides `PauseOverlay`; haptic warning |
-| Ball lifecycle | `ensurePrimaryBall()` before launch; ball entry recreated after splice-on-score |
+| Ball lifecycle | `beginMatch()` unified start path; `ensurePrimaryBall()` before launch; sync `gameStartedRef` before layout; defer start if court unmeasured (`pendingServeSideRef`); `handleLayout` uses `isPlaying` (not stale `gameStartedRef`) to avoid pre-game paddle reset mid-start |
+| Serve | Player serves first; tap-to-launch on player attach; JS-thread `releaseAttachedBall` |
 | Entities | Scaled from court size via `computeCourtMetrics` |
 | Difficulty | Easy / Medium / Hard — start overlay + HUD badge; scales AI speed |
+| Court color | Classic (green) / Random — **Board** toggle on intro; `courtBackgroundColor` on court view |
 | Pause | HUD corner button; Space/P on web; court-framed `PauseOverlay` |
-| Feel | Haptic on paddle hit; ball trail ghosts; paddle hit flash |
-| Powerups | Spawn every 8s (max 5, 6s lifetime); labeled orbs — see **Powerup legend** (top + below) |
-| Stones | 3–4 per match, random center placement; ball reflects off stones; layout fixed for active rally |
-| Ball speed | Paddle hits use total velocity magnitude (not one axis only); stone bounces enforce a minimum speed floor |
+| Feel | Haptic on paddle hit; ball trail (cleared on score/serve/off-court); paddle hit flash |
+| Powerups | Spawn every 8s (max 5, 6s lifetime); labeled orbs — see **Powerup legend** |
+| Stones | 3–4 per match, random placement; ball reflects; regen on Start / Play Again only |
+| Ball speed | `nextPaddleHitSpeed()` uses `Math.hypot(vx, vy)`; stone bounce min-speed floor |
+| Paddle bounds | `clampPaddlesToCourt()` on powerup + layout; pan/keyboard/AI use live paddle length |
 
 ### Powerup legend (reference)
 
@@ -157,9 +186,10 @@ Collector = court-half owner (AI left/top, You right/bottom) on ball hit or tap.
 ### Constraints (in code)
 
 - `courtW` / `courtH` update via court `onLayout`
-- `handleLayout` skips ball reposition when `isPlaying` (active rally)
+- **Active play layout:** metrics sync + `clampPaddlesToCourt()` only — does **not** reset paddle positions
+- Pre-game / win: `positionPaddles()` uses **current** `leftPaddleHeight` / `rightPaddleHeight` + clamp
 - `updateCourtBounds` only sets state when bounds actually change (avoids layout loops)
-- Gesture clamp uses `courtW` (portrait) or `courtH` (landscape) on movable axis
+- Gesture clamp uses live paddle length on movable axis (`courtW` portrait X, `courtH` landscape Y)
 
 ---
 
@@ -290,7 +320,8 @@ gameStarted && !winner
 - [x] `lockedGameplayPortrait` captured at `startGame` / `playAgain`; cleared when match ends
 - [x] Court `key={portrait|landscape}` forces layout remeasure on orientation flip
 - [x] Gameplay entities hidden under overlays (no paddle/scoreboard bleed-through)
-- [x] `ensurePrimaryBall()` — ball entry always exists before `launchBall`
+- [x] `beginMatch()` — single start/play-again path; paddle heights set before `positionPaddles()`; ball always launched after `ensurePrimaryBall()` + `bumpBalls()`
+- [x] **Missing ball on start fix** — sync `gameStartedRef` immediately; `handleLayout` treats `isPlaying` as active match (prevents pre-game branch from resetting paddles while ball attaches); portrait uses `layoutConfig.portraitCourtSize` fallback; landscape defers via `pendingServeSideRef` until first `onLayout`
 - [x] Mid-game orientation **lock** replaces debounced restart
 - [x] `RotationLockedBanner` for rotation-blocked feedback (replaces `GameToast`)
 - [x] `expo-sensors` accelerometer — normalized gravity tilt detect (works in g and m/s²)
@@ -345,6 +376,7 @@ npx expo run:android
 - [x] Status bar visible in portrait (`App.tsx` + SafeAreaView top edge)
 - [x] Rotation-locked banner — bottom safe-area, gold border, auto-pause/resume
 - [x] Landscape intro overlay — full play-area (fixes safe-area / centering on rotate)
+- [x] Playboard color toggle — Classic / Random on intro; random palette roll per match
 
 ### Code health
 
@@ -397,6 +429,36 @@ Note: center court still has intentional **0.75×** travel speed on the primary 
 | `STONE_RADIUS_BASE` | 16 px (scaled by court) |
 | `STONE_COUNT_MIN` | 3 |
 | `STONE_COUNT_MAX` | 4 |
+
+### Ball serve & launch (`ballLaunch.ts`)
+
+- [x] `OPENING_SERVE_SIDE` — player (`0`) serves first on cold start / new match
+- [x] `serveSideAfterScore()` — scorer serves after each point
+- [x] `randomLaunchVelocity()` on JS thread (not worklet `Math.random`)
+- [x] `randomPaddleAttachOffset()` — varied attach point along paddle edge
+- [x] `computeAttachedBallPosition()` — portrait + landscape attach snap
+- [x] `releaseAttachedBall()` — single release path (timer + attach countdown)
+- [x] **Tap to serve** — `tryLaunchPlayerServe()` when `ballAttachSide === PLAYER_SERVE_SIDE`
+
+### Ball trail fix
+
+Stale trail shared values left ghost dots at the court edge after a score (visible in portrait top zone).
+
+- [x] `hideBallTrail()` / `clearBallTrail()` — move trail SVs off-screen (`TRAIL_HIDDEN_POS`)
+- [x] Clear on serve attach, when ball off-court, when no ball / ball attached
+- [x] `Ball.tsx` — trail dot `opacity: 0` when position is hidden
+
+### Paddle bounds (grow / shrink powerups)
+
+Wide paddle could extend past court edge after **G** powerup — especially AI when layout used base height.
+
+- [x] `clampPaddleOrigin()` in `paddleBounds.ts`
+- [x] `clampPaddlesToCourt()` — both paddles on powerup apply/revert and on layout
+- [x] Pan gesture reclamps on touch + uses live `rightPaddleHeight` in worklet
+- [x] `useKeyboardControls` uses `clampPaddleOrigin`
+- [x] `updateAiPaddle()` in `ballPhysics.ts` — AI track + clamp **every frame** with live `leftPaddleHeight`
+- [x] `positionPaddles()` centers using actual shared paddle lengths, not base `metrics.paddleHeight` only
+- [x] Active play `handleLayout` — no `positionPaddles()` reset (preserves in-rally positions)
 
 ---
 
@@ -492,6 +554,10 @@ Extend `PowerupType` + `applyPowerup()` in `GameScreen.tsx` (paddle shared value
 - [x] Cold-start landscape play — paddles centered, ball visible
 - [x] Powerups show **G** / **S** labels with correct grow/shrink effects
 - [x] Random court stones reflect the ball; layout persists per match
+- [x] Player serves first; tap launches ball on player serve
+- [x] No trail ghosts after ball exits court / on respawn
+- [x] Grow/shrink paddles stay fully inside court (player + AI)
+- [x] Intro **Board** toggle: Classic green or Random from palette (new roll each match)
 
 ### Phase8 (when shipped)
 
@@ -509,6 +575,9 @@ Extend `PowerupType` + `applyPowerup()` in `GameScreen.tsx` (paddle shared value
 5. Tablet-specific orientation lock → deferred (play lock applies on tablets too)
 6. Powerup letters → **G** = Grow (blue), **S** = Shrink (red); collector = court-half owner
 7. More powerup types → Phase8 backlog (see tiers **F/T/N/K**, **B/C/M/R**, **O/X/Z**, **A/E/?**)
+8. Opening serve → **player first** (`OPENING_SERVE_SIDE = 0`); tap-to-serve on player attach only
+9. Paddle off-court after grow → fixed via `clampPaddlesToCourt` + per-frame `updateAiPaddle`
+10. Court color → **Classic** (default green) or **Random** (6-color palette); intro toggle; roll on start/play again
 
 ## Next Steps
 
@@ -518,8 +587,10 @@ Extend `PowerupType` + `applyPowerup()` in `GameScreen.tsx` (paddle shared value
 4. ~~Orientation lock during play~~ ✅
 5. ~~Device QA — rotation lock + banner~~ ✅ *(Android device confirmed; banner + auto-pause)*
 6. ~~Powerup labels + court stones~~ ✅
-7. ~~Ball speed crawl after stone deflect~~ ✅ *(paddle hit uses total speed magnitude)*
-8. **iOS prebuild** — confirm `Info.plist` orientation keys when `ios/` is generated
-9. **iOS device QA** — rotation banner safe-area + accelerometer detect
-10. **Phase8** — implement **E** (Enemy) + **B** (Boost) first; then HUD active effects
-11. **Optional** — stone hit haptic/sound; Mystery (**?**) powerup; multi-ball (**M**)
+7. ~~Ball speed crawl after stone deflect~~ ✅
+8. ~~Serve flow + tap launch + trail ghosts + paddle bounds~~ ✅
+9. ~~Playboard color toggle (Classic / Random)~~ ✅
+10. **iOS prebuild** — confirm `Info.plist` orientation keys when `ios/` is generated
+11. **iOS device QA** — rotation banner safe-area + accelerometer detect
+12. **Phase8** — implement **E** (Enemy) + **B** (Boost) first; then HUD active effects
+13. **Optional** — stone hit haptic/sound; Mystery (**?**) powerup; multi-ball (**M**)
