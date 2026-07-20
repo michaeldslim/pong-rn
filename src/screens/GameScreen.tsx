@@ -872,6 +872,15 @@ export function GameScreen() {
     ensurePrimaryBall();
     clearAttachTimer();
     hideBallTrail();
+
+    if (gameStartedRef.current && attach) {
+      const W = courtW.value;
+      const H = courtH.value;
+      if (W > 0 && H > 0) {
+        regenerateStones(W, H, isPortraitRef.current);
+      }
+    }
+
     const portrait = isPortraitRef.current;
     const m = metricsSV.value;
     ballAttachSide.value = side;
@@ -914,7 +923,7 @@ export function GameScreen() {
     attachCountdown.value = Math.max(1, Math.round(attachMs / 16.67));
     attachTimerRef.current = setTimeout(() => releaseAttachedBall(), attachMs);
     bumpBalls();
-  }, [clearAttachTimer, ensurePrimaryBall, bumpBalls, releaseAttachedBall, hideBallTrail]);
+  }, [clearAttachTimer, ensurePrimaryBall, bumpBalls, releaseAttachedBall, hideBallTrail, regenerateStones]);
 
   const awardStagePoint = useCallback((collector: Collector) => {
     if (!isPlaying.value || winnerRef.current) return;

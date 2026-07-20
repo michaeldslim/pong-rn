@@ -167,9 +167,9 @@ export const POWERUP_HUD_LABELS: Record<PowerupType, string> = {
   hideStone: 'H⌛',
 };
 
-// Court stones — random obstacles that reflect the ball (count capped by difficulty)
+// Court stones — fixed count per difficulty (reset each stage / point)
 export const STONE_RADIUS_BASE = 16;
-export const STONE_COUNT_MAX_BY_DIFFICULTY: Record<AiDifficulty, number> = {
+export const STONE_COUNT_BY_DIFFICULTY: Record<AiDifficulty, number> = {
   easy: 2,
   medium: 4,
   hard: 6,

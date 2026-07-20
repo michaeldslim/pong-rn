@@ -1,5 +1,5 @@
 import {
-  STONE_COUNT_MAX_BY_DIFFICULTY,
+  STONE_COUNT_BY_DIFFICULTY,
   STONE_RADIUS_BASE,
   type AiDifficulty,
 } from '../constants/game';
@@ -18,11 +18,11 @@ interface StonePlacementMetrics {
   paddleVerticalPadding: number;
 }
 
-const MAX_PLACEMENT_ATTEMPTS = 48;
+const MAX_PLACEMENT_ATTEMPTS = 96;
+const GAP_MULTIPLIERS = [1, 0.85, 0.7] as const;
 
-function randomStoneCount(difficulty: AiDifficulty): number {
-  const max = STONE_COUNT_MAX_BY_DIFFICULTY[difficulty];
-  return Math.floor(Math.random() * (max + 1));
+function stoneCountForDifficulty(difficulty: AiDifficulty): number {
+  return STONE_COUNT_BY_DIFFICULTY[difficulty];
 }
 
 function placementBounds(
@@ -53,14 +53,34 @@ function isValidPosition(
   y: number,
   radius: number,
   placed: CourtStone[],
+  gapMultiplier: number,
 ): boolean {
-  const minGap = radius * 2.4;
+  const minGap = radius * 2.4 * gapMultiplier;
   for (const stone of placed) {
     const dx = x - stone.x;
     const dy = y - stone.y;
     if (dx * dx + dy * dy < minGap * minGap) return false;
   }
   return true;
+}
+
+function tryPlaceOneStone(
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  radius: number,
+  placed: CourtStone[],
+): { x: number; y: number } | null {
+  for (const gapMultiplier of GAP_MULTIPLIERS) {
+    for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
+      const x = minX + Math.random() * (maxX - minX);
+      const y = minY + Math.random() * (maxY - minY);
+      if (!isValidPosition(x, y, radius, placed, gapMultiplier)) continue;
+      return { x, y };
+    }
+  }
+  return null;
 }
 
 export function generateCourtStones(
@@ -76,22 +96,13 @@ export function generateCourtStones(
 
   if (maxX <= minX || maxY <= minY) return [];
 
-  const targetCount = randomStoneCount(difficulty);
+  const targetCount = stoneCountForDifficulty(difficulty);
   const placed: CourtStone[] = [];
 
   for (let id = 1; id <= targetCount; id++) {
-    let placedStone: CourtStone | null = null;
-
-    for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
-      const x = minX + Math.random() * (maxX - minX);
-      const y = minY + Math.random() * (maxY - minY);
-      if (!isValidPosition(x, y, radius, placed)) continue;
-
-      placedStone = { id, x, y, radius };
-      break;
-    }
-
-    if (placedStone) placed.push(placedStone);
+    const position = tryPlaceOneStone(minX, maxX, minY, maxY, radius, placed);
+    if (!position) continue;
+    placed.push({ id, x: position.x, y: position.y, radius });
   }
 
   return placed;
@@ -117,7 +128,7 @@ export function placeTemporaryStone(
     const spread = radius * 3;
     const x = Math.max(minX, Math.min(maxX, nearX + (Math.random() * 2 - 1) * spread));
     const y = Math.max(minY, Math.min(maxY, nearY + (Math.random() * 2 - 1) * spread));
-    if (!isValidPosition(x, y, radius, existing)) continue;
+    if (!isValidPosition(x, y, radius, existing, 1)) continue;
     return { id: nextId, x, y, radius };
   }
 
@@ -167,12 +178,7 @@ export function relocateStoneAtRandom(
   const { minX, maxX, minY, maxY } = placementBounds(courtW, courtH, radius, portrait, metrics);
   if (maxX <= minX || maxY <= minY) return null;
 
-  for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
-    const x = minX + Math.random() * (maxX - minX);
-    const y = minY + Math.random() * (maxY - minY);
-    if (!isValidPosition(x, y, radius, existing)) continue;
-    return { ...stone, x, y };
-  }
-
-  return null;
+  const position = tryPlaceOneStone(minX, maxX, minY, maxY, radius, existing);
+  if (!position) return null;
+  return { ...stone, x: position.x, y: position.y };
 }
