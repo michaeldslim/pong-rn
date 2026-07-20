@@ -48,6 +48,7 @@ import {
   POWERUP_MAX,
   POWERUP_LIFETIME,
   TEMP_STONE_DURATION_MS,
+  WIN_SCORE,
 } from '../constants/game';
 import {
   CLASSIC_COURT_COLOR,
@@ -363,7 +364,14 @@ export function GameScreen() {
 
   const regenerateStones = useCallback((width: number, height: number, portrait: boolean) => {
     const metrics = computeCourtMetrics(width, height, portrait, difficultyRef.current);
-    const courtStones = generateCourtStones(width, height, metrics.scale, portrait, metrics);
+    const courtStones = generateCourtStones(
+      width,
+      height,
+      metrics.scale,
+      portrait,
+      metrics,
+      difficultyRef.current,
+    );
     stonesSV.value = courtStones;
     setStones(courtStones);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -696,75 +704,6 @@ export function GameScreen() {
     setStones(updated);
   }, []);
 
-  const applyResolvedPowerup = useCallback((
-    type: PowerupType,
-    collector: Collector,
-    orbX: number,
-    orbY: number,
-  ) => {
-    switch (type) {
-      case 'grow':
-        applyPaddleHeightEffect(resolvePaddleTarget(type, collector), PADDLE_HEIGHT_BUFF, type);
-        break;
-      case 'shrink':
-        applyPaddleHeightEffect(resolvePaddleTarget(type, collector), PADDLE_HEIGHT_DEBUFF, type);
-        break;
-      case 'ally':
-        applyPaddleHeightEffect(resolvePaddleTarget(type, collector), PADDLE_HEIGHT_BUFF, type);
-        break;
-      case 'enemy':
-        applyPaddleHeightEffect(resolvePaddleTarget(type, collector), PADDLE_HEIGHT_DEBUFF, type);
-        break;
-      case 'thick':
-        applyPaddleWidthEffect(resolvePaddleTarget(type, collector), PADDLE_WIDTH_BUFF, type);
-        break;
-      case 'narrow':
-        applyPaddleWidthEffect(resolvePaddleTarget(type, collector), PADDLE_WIDTH_DEBUFF, type);
-        break;
-      case 'fast':
-        applyFastEffect(resolvePaddleTarget(type, collector));
-        break;
-      case 'sticky':
-        applyStickyEffect(resolvePaddleTarget(type, collector));
-        break;
-      case 'boost':
-        applyBoostEffect(collector);
-        break;
-      case 'curve':
-        applyCurveEffect(collector);
-        break;
-      case 'multi':
-        spawnSecondBall(collector);
-        break;
-      case 'reverse':
-        applyReverseEffect();
-        break;
-      case 'obstacle':
-        applyObstacleEffect(orbX, orbY);
-        break;
-      case 'clear':
-        applyClearEffect(orbX, orbY);
-        break;
-      case 'zone':
-        applyZoneEffect(collector);
-        break;
-      default:
-        break;
-    }
-  }, [
-    applyBoostEffect,
-    applyClearEffect,
-    applyCurveEffect,
-    applyFastEffect,
-    applyObstacleEffect,
-    applyPaddleHeightEffect,
-    applyPaddleWidthEffect,
-    applyReverseEffect,
-    applyStickyEffect,
-    applyZoneEffect,
-    spawnSecondBall,
-  ]);
-
   const positionPaddles = useCallback((width: number, height: number, portrait: boolean, metrics: ScaledMetrics) => {
     const pad = paddleVerticalPaddingSV.value;
     if (portrait) {
@@ -931,6 +870,120 @@ export function GameScreen() {
     attachTimerRef.current = setTimeout(() => releaseAttachedBall(), attachMs);
     bumpBalls();
   }, [clearAttachTimer, ensurePrimaryBall, bumpBalls, releaseAttachedBall, hideBallTrail]);
+
+  const awardStagePoint = useCallback((collector: Collector) => {
+    if (!isPlaying.value || winnerRef.current) return;
+
+    clearAttachTimer();
+    hideBallTrail();
+    ballAttached.value = false;
+    attachCountdown.value = 0;
+    setBallEntries([getPrimaryBallEntry()]);
+
+    const scoredByPlayer = collector === 'You';
+    if (scoredByPlayer) {
+      const next = playerScoreSV.value + 1;
+      playerScoreSV.value = next;
+      setPlayerScore(next);
+      if (next >= WIN_SCORE) {
+        isPlaying.value = false;
+        recordWinner('You');
+        return;
+      }
+      launchBall(serveSideAfterScore(true), true, 3000);
+      return;
+    }
+
+    const next = aiScoreSV.value + 1;
+    aiScoreSV.value = next;
+    setAiScore(next);
+    if (next >= WIN_SCORE) {
+      isPlaying.value = false;
+      recordWinner('AI');
+      return;
+    }
+    launchBall(serveSideAfterScore(false), true, 1000);
+  }, [
+    clearAttachTimer,
+    getPrimaryBallEntry,
+    hideBallTrail,
+    launchBall,
+    recordWinner,
+    setBallEntries,
+  ]);
+
+  const applyResolvedPowerup = useCallback((
+    type: PowerupType,
+    collector: Collector,
+    orbX: number,
+    orbY: number,
+  ) => {
+    switch (type) {
+      case 'grow':
+        applyPaddleHeightEffect(resolvePaddleTarget(type, collector), PADDLE_HEIGHT_BUFF, type);
+        break;
+      case 'shrink':
+        applyPaddleHeightEffect(resolvePaddleTarget(type, collector), PADDLE_HEIGHT_DEBUFF, type);
+        break;
+      case 'ally':
+        applyPaddleHeightEffect(resolvePaddleTarget(type, collector), PADDLE_HEIGHT_BUFF, type);
+        break;
+      case 'enemy':
+        applyPaddleHeightEffect(resolvePaddleTarget(type, collector), PADDLE_HEIGHT_DEBUFF, type);
+        break;
+      case 'thick':
+        applyPaddleWidthEffect(resolvePaddleTarget(type, collector), PADDLE_WIDTH_BUFF, type);
+        break;
+      case 'narrow':
+        applyPaddleWidthEffect(resolvePaddleTarget(type, collector), PADDLE_WIDTH_DEBUFF, type);
+        break;
+      case 'fast':
+        applyFastEffect(resolvePaddleTarget(type, collector));
+        break;
+      case 'sticky':
+        applyStickyEffect(resolvePaddleTarget(type, collector));
+        break;
+      case 'boost':
+        applyBoostEffect(collector);
+        break;
+      case 'curve':
+        applyCurveEffect(collector);
+        break;
+      case 'multi':
+        spawnSecondBall(collector);
+        break;
+      case 'reverse':
+        applyReverseEffect();
+        break;
+      case 'obstacle':
+        applyObstacleEffect(orbX, orbY);
+        break;
+      case 'clear':
+        applyClearEffect(orbX, orbY);
+        break;
+      case 'zone':
+        applyZoneEffect(collector);
+        break;
+      case 'stage':
+        awardStagePoint(collector);
+        break;
+      default:
+        break;
+    }
+  }, [
+    applyBoostEffect,
+    applyClearEffect,
+    applyCurveEffect,
+    applyFastEffect,
+    applyObstacleEffect,
+    applyPaddleHeightEffect,
+    applyPaddleWidthEffect,
+    applyReverseEffect,
+    applyStickyEffect,
+    applyZoneEffect,
+    awardStagePoint,
+    spawnSecondBall,
+  ]);
 
   const tryLaunchPlayerServe = useCallback(() => {
     if (isPausedSV.value || !isPlaying.value) return;

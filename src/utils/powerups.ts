@@ -42,6 +42,7 @@ function buildSpawnPool(difficulty: AiDifficulty, playerLosing: boolean): Weight
     { type: 'obstacle', weight: 5 },
     { type: 'clear', weight: 4 },
     { type: 'zone', weight: 4 },
+    { type: 'stage', weight: 2 },
     { type: 'mystery', weight: 3 },
   ];
 
@@ -122,4 +123,8 @@ export function isBallEffect(type: PowerupType): boolean {
 
 export function isCourtEffect(type: PowerupType): boolean {
   return type === 'obstacle' || type === 'clear' || type === 'zone';
+}
+
+export function isStageEffect(type: PowerupType): boolean {
+  return type === 'stage';
 }
