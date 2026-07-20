@@ -126,7 +126,18 @@ export function placeTemporaryStone(
 
 /** Remove the stone closest to `(x, y)` — powerup **X**. */
 export function removeNearestStone(stones: CourtStone[], x: number, y: number): CourtStone[] {
-  if (stones.length === 0) return stones;
+  const { remaining } = takeNearestStone(stones, x, y);
+  return remaining;
+}
+
+/** Take the nearest stone off the court — powerup **H** (temporary hide). */
+export function takeNearestStone(
+  stones: CourtStone[],
+  x: number,
+  y: number,
+): { remaining: CourtStone[]; removed: CourtStone | null } {
+  if (stones.length === 0) return { remaining: stones, removed: null };
+
   let bestIdx = 0;
   let bestDist = Infinity;
   for (let i = 0; i < stones.length; i++) {
@@ -138,5 +149,30 @@ export function removeNearestStone(stones: CourtStone[], x: number, y: number): 
       bestIdx = i;
     }
   }
-  return stones.filter((_, i) => i !== bestIdx);
+
+  const removed = stones[bestIdx];
+  return { remaining: stones.filter((_, i) => i !== bestIdx), removed };
+}
+
+/** Respawn a hidden stone at a new random valid position. */
+export function relocateStoneAtRandom(
+  stone: CourtStone,
+  courtW: number,
+  courtH: number,
+  portrait: boolean,
+  metrics: StonePlacementMetrics,
+  existing: CourtStone[],
+): CourtStone | null {
+  const radius = stone.radius;
+  const { minX, maxX, minY, maxY } = placementBounds(courtW, courtH, radius, portrait, metrics);
+  if (maxX <= minX || maxY <= minY) return null;
+
+  for (let attempt = 0; attempt < MAX_PLACEMENT_ATTEMPTS; attempt++) {
+    const x = minX + Math.random() * (maxX - minX);
+    const y = minY + Math.random() * (maxY - minY);
+    if (!isValidPosition(x, y, radius, existing)) continue;
+    return { ...stone, x, y };
+  }
+
+  return null;
 }

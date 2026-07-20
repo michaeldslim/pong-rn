@@ -10,7 +10,7 @@ import {
 } from '../constants/hud';
 import type { StartOverlayProps } from '../types';
 
-const DIFFICULTIES: AiDifficulty[] = ['easy', 'medium', 'hard'];
+const DIFFICULTIES: AiDifficulty[] = ['easy', 'medium', 'mediumPlus', 'hard'];
 
 function OptionRow<T extends string>({
   label,

@@ -41,6 +41,7 @@ function buildSpawnPool(difficulty: AiDifficulty, playerLosing: boolean): Weight
     { type: 'reverse', weight: 4 },
     { type: 'obstacle', weight: 5 },
     { type: 'clear', weight: 4 },
+    { type: 'hideStone', weight: 5 },
     { type: 'zone', weight: 4 },
     { type: 'stage', weight: 2 },
     { type: 'mystery', weight: 3 },
@@ -50,6 +51,15 @@ function buildSpawnPool(difficulty: AiDifficulty, playerLosing: boolean): Weight
     return base.map((entry) => {
       if (entry.type === 'grow' || entry.type === 'ally') return { ...entry, weight: entry.weight * 2 };
       if (entry.type === 'enemy' || entry.type === 'mystery') return { ...entry, weight: Math.max(1, entry.weight - 2) };
+      return entry;
+    });
+  }
+
+  if (difficulty === 'mediumPlus') {
+    return base.map((entry) => {
+      if (entry.type === 'enemy' || entry.type === 'shrink' || entry.type === 'hideStone') {
+        return { ...entry, weight: entry.weight + 2 };
+      }
       return entry;
     });
   }
@@ -122,7 +132,7 @@ export function isBallEffect(type: PowerupType): boolean {
 }
 
 export function isCourtEffect(type: PowerupType): boolean {
-  return type === 'obstacle' || type === 'clear' || type === 'zone';
+  return type === 'obstacle' || type === 'clear' || type === 'zone' || type === 'hideStone';
 }
 
 export function isStageEffect(type: PowerupType): boolean {

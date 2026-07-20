@@ -49,6 +49,7 @@ import {
   POWERUP_LIFETIME,
   TEMP_STONE_DURATION_MS,
   WIN_SCORE,
+  HIDDEN_STONE_DURATION_MS,
 } from '../constants/game';
 import {
   CLASSIC_COURT_COLOR,
@@ -78,7 +79,7 @@ import {
   type Collector,
   type PaddleSide,
 } from '../utils/powerups';
-import { generateCourtStones, placeTemporaryStone, removeNearestStone, type CourtStone } from '../utils/stones';
+import { generateCourtStones, placeTemporaryStone, relocateStoneAtRandom, removeNearestStone, takeNearestStone, type CourtStone } from '../utils/stones';
 import { clampPaddleOrigin } from '../utils/paddleBounds';
 
 const DEFAULT_METRICS: ScaledMetrics = {
@@ -337,6 +338,7 @@ export function GameScreen() {
   const powerupId = useRef(1);
   const effectTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const tempStoneTimersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  const hiddenStoneTimersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
   const nextTempStoneIdRef = useRef(1000);
 
   const syncCourtMetrics = useCallback((width: number, height: number, portrait: boolean) => {
@@ -363,6 +365,11 @@ export function GameScreen() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const regenerateStones = useCallback((width: number, height: number, portrait: boolean) => {
+    Object.keys(hiddenStoneTimersRef.current).forEach((id) => {
+      const timer = hiddenStoneTimersRef.current[Number(id)];
+      if (timer) clearTimeout(timer);
+      delete hiddenStoneTimersRef.current[Number(id)];
+    });
     const metrics = computeCourtMetrics(width, height, portrait, difficultyRef.current);
     const courtStones = generateCourtStones(
       width,
@@ -472,9 +479,18 @@ export function GameScreen() {
     }
   }, []);
 
+  const clearHiddenStoneTimer = useCallback((stoneId: number) => {
+    const existing = hiddenStoneTimersRef.current[stoneId];
+    if (existing) {
+      clearTimeout(existing);
+      delete hiddenStoneTimersRef.current[stoneId];
+    }
+  }, []);
+
   const resetPowerupEffects = useCallback(() => {
     Object.keys(effectTimersRef.current).forEach((key) => clearEffectTimer(key));
     Object.keys(tempStoneTimersRef.current).forEach((id) => clearTempStoneTimer(Number(id)));
+    Object.keys(hiddenStoneTimersRef.current).forEach((id) => clearHiddenStoneTimer(Number(id)));
     setHudEffects([]);
 
     const base = basePaddleHeightRef.current;
@@ -490,7 +506,7 @@ export function GameScreen() {
     aiSpeedMultiplierSV.value = 1;
     curveActiveSV.value = 0;
     playerInputMultiplierSV.value = 1;
-  }, [clearEffectTimer, clearTempStoneTimer]);
+  }, [clearEffectTimer, clearTempStoneTimer, clearHiddenStoneTimer]);
 
   const revertPaddleHeight = useCallback((paddle: PaddleSide) => {
     const base = basePaddleHeightRef.current;
@@ -703,6 +719,35 @@ export function GameScreen() {
     stonesSV.value = updated;
     setStones(updated);
   }, []);
+
+  const applyHideStoneEffect = useCallback((orbX: number, orbY: number) => {
+    const W = courtW.value;
+    const H = courtH.value;
+    if (W <= 0 || H <= 0) return;
+
+    const current = stonesSV.value;
+    if (current.length === 0) return;
+
+    const { remaining, removed } = takeNearestStone(current, orbX, orbY);
+    if (!removed) return;
+
+    clearHiddenStoneTimer(removed.id);
+    stonesSV.value = remaining;
+    setStones(remaining);
+
+    hiddenStoneTimersRef.current[removed.id] = setTimeout(() => {
+      delete hiddenStoneTimersRef.current[removed.id];
+
+      const portrait = isPortraitRef.current;
+      const metrics = computeCourtMetrics(W, H, portrait, difficultyRef.current);
+      const respawned = relocateStoneAtRandom(removed, W, H, portrait, metrics, stonesSV.value);
+      if (!respawned) return;
+
+      const updated = [...stonesSV.value, respawned];
+      stonesSV.value = updated;
+      setStones(updated);
+    }, HIDDEN_STONE_DURATION_MS);
+  }, [clearHiddenStoneTimer]);
 
   const positionPaddles = useCallback((width: number, height: number, portrait: boolean, metrics: ScaledMetrics) => {
     const pad = paddleVerticalPaddingSV.value;
@@ -961,6 +1006,9 @@ export function GameScreen() {
       case 'clear':
         applyClearEffect(orbX, orbY);
         break;
+      case 'hideStone':
+        applyHideStoneEffect(orbX, orbY);
+        break;
       case 'zone':
         applyZoneEffect(collector);
         break;
@@ -975,6 +1023,7 @@ export function GameScreen() {
     applyClearEffect,
     applyCurveEffect,
     applyFastEffect,
+    applyHideStoneEffect,
     applyObstacleEffect,
     applyPaddleHeightEffect,
     applyPaddleWidthEffect,

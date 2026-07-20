@@ -19,17 +19,19 @@ export const MAX_BALL_SPEED = 14;         // upper ceiling
 // AI tuning — lower = easier to beat
 export const AI_SPEED = 3.5; // max px per frame the AI paddle can move (medium default)
 
-export type AiDifficulty = 'easy' | 'medium' | 'hard';
+export type AiDifficulty = 'easy' | 'medium' | 'mediumPlus' | 'hard';
 
 export const AI_SPEED_BY_DIFFICULTY: Record<AiDifficulty, number> = {
   easy: 2.2,
   medium: 3.5,
+  mediumPlus: 4.2,
   hard: 5.2,
 };
 
 export const AI_DIFFICULTY_LABELS: Record<AiDifficulty, string> = {
   easy: 'Easy',
   medium: 'Medium',
+  mediumPlus: 'Medium+',
   hard: 'Hard',
 };
 
@@ -54,7 +56,8 @@ export type PowerupType =
   | 'ally'
   | 'enemy'
   | 'mystery'
-  | 'stage';
+  | 'stage'
+  | 'hideStone';
 
 export type PowerupRing = 'buff' | 'debuff' | 'mystery';
 
@@ -65,6 +68,7 @@ export const BOOST_DURATION_MS = 3000;
 export const MULTI_BALL_DURATION_MS = 5000;
 export const STICKY_ATTACH_MS = 300;
 export const TEMP_STONE_DURATION_MS = 8000;
+export const HIDDEN_STONE_DURATION_MS = 6000;
 export const POWERUP_PULSE_WINDOW_MS = 2000;
 
 export const PADDLE_HEIGHT_BUFF = 1.5;
@@ -92,6 +96,7 @@ export const POWERUP_LABELS: Record<PowerupType, string> = {
   enemy: 'E',
   mystery: '?',
   stage: 'W',
+  hideStone: 'H',
 };
 
 export const POWERUP_COLORS: Record<PowerupType, string> = {
@@ -112,6 +117,7 @@ export const POWERUP_COLORS: Record<PowerupType, string> = {
   enemy: '#FF3B30',
   mystery: '#FFD60A',
   stage: '#34C759',
+  hideStone: '#64D2FF',
 };
 
 export const POWERUP_RING: Record<PowerupType, PowerupRing> = {
@@ -132,6 +138,7 @@ export const POWERUP_RING: Record<PowerupType, PowerupRing> = {
   enemy: 'debuff',
   mystery: 'mystery',
   stage: 'buff',
+  hideStone: 'buff',
 };
 
 export const POWERUP_RING_COLORS: Record<PowerupRing, string> = {
@@ -159,6 +166,7 @@ export const POWERUP_HUD_LABELS: Record<PowerupType, string> = {
   enemy: 'E↓',
   mystery: '?',
   stage: 'W+1',
+  hideStone: 'H⌛',
 };
 
 // Court stones — random obstacles that reflect the ball (count capped by difficulty)
@@ -166,6 +174,7 @@ export const STONE_RADIUS_BASE = 16;
 export const STONE_COUNT_MAX_BY_DIFFICULTY: Record<AiDifficulty, number> = {
   easy: 2,
   medium: 4,
+  mediumPlus: 5,
   hard: 6,
 };
 
