@@ -81,4 +81,9 @@ export interface PauseOverlayProps {
   compact?: boolean;
 }
 
+export interface StageLightningFlashProps {
+  collector: 'AI' | 'You';
+  onComplete: () => void;
+}
+
 export type { LayoutConfig } from '../utils/courtMetrics';

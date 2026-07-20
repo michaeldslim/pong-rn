@@ -9,7 +9,6 @@ export const MYSTERY_POOL: PowerupType[] = [
   'grow',
   'shrink',
   'fast',
-  'thick',
   'narrow',
   'sticky',
   'boost',
@@ -32,7 +31,6 @@ function buildSpawnPool(difficulty: AiDifficulty, playerLosing: boolean): Weight
     { type: 'ally', weight: 8 },
     { type: 'enemy', weight: 8 },
     { type: 'fast', weight: 7 },
-    { type: 'thick', weight: 6 },
     { type: 'narrow', weight: 6 },
     { type: 'sticky', weight: 5 },
     { type: 'boost', weight: 8 },
@@ -96,7 +94,7 @@ export function rollMysteryType(): PowerupType {
 
 /** Which paddle receives a paddle-targeted effect. Enemy inverts collector → opponent paddle. */
 export function resolvePaddleTarget(type: PowerupType, collector: Collector): PaddleSide {
-  const buffsCollector = type === 'grow' || type === 'ally' || type === 'fast' || type === 'thick' || type === 'sticky';
+  const buffsCollector = type === 'grow' || type === 'ally' || type === 'fast' || type === 'sticky';
   const debuffsCollector = type === 'shrink' || type === 'narrow';
   const debuffsOpponent = type === 'enemy';
 
@@ -115,7 +113,7 @@ export function isPaddleHeightEffect(type: PowerupType): boolean {
 }
 
 export function isPaddleWidthEffect(type: PowerupType): boolean {
-  return type === 'thick' || type === 'narrow';
+  return type === 'narrow';
 }
 
 export function isPaddleSpeedEffect(type: PowerupType): boolean {

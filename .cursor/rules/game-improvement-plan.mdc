@@ -28,11 +28,11 @@ Investigation and implementation roadmap. **Priority: HUD board — centered hor
 
 Powerups spawn on court during play (~every 8s, max 5, 6s lifetime). Each is a **colored circle with a white first-letter label** and a **buff / debuff / mystery ring** (blue / red / gold). The collector is whichever side owns that half of the court when the ball hits or you tap the orb — **AI** (left/top) or **You** (right/bottom).
 
-**18 types** in `POWERUP_LABELS` / `POWERUP_COLORS` (`src/constants/game.ts`). Spawn weights in `pickSpawnPowerup()` (`src/utils/powerups.ts`) — Easy biases grow/ally when losing; Hard biases enemy/mystery/shrink; **H** spawns on **Medium** and **Hard** only.
+**17 types** in `POWERUP_LABELS` / `POWERUP_COLORS` (`src/constants/game.ts`). Spawn weights in `pickSpawnPowerup()` (`src/utils/powerups.ts`) — Easy biases grow/ally when losing; Hard biases enemy/mystery/shrink; **H** spawns on **Medium** and **Hard** only.
 
 | Tier | Labels | Summary |
 |------|--------|---------|
-| Paddle | **G S F T N K** | Grow, Shrink, Fast, Thick, Narrow, Sticky |
+| Paddle | **G S F N K** | Grow, Shrink, Fast, Narrow, Sticky |
 | Ball | **B C M R** | Boost, Curve, Multi (2-ball), Reverse |
 | Court | **O X Z H** | Temp stone, Clear stone (permanent), Disable center slow, **Hide** stone (6s, respawns elsewhere) |
 | Mind-game | **A E ?** | Ally buff, Enemy debuff (opponent), Mystery roll |
@@ -142,7 +142,7 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 | Court color | Classic (green) / Random — **Board** toggle on intro; `courtBackgroundColor` on court view |
 | Pause | HUD corner button; Space/P on web; court-framed `PauseOverlay` |
 | Feel | Haptic + sound on paddle hit; **soft haptic + quieter tap on stone bounce**; ball trail; paddle hit flash |
-| Powerups | 18 types; weighted spawn; HUD chips; rings; mystery `?`; **W** stage point; **H** temp stone hide |
+| Powerups | 17 types; weighted spawn; HUD chips; rings; mystery `?`; **W** stage point; **H** temp stone hide |
 | Stones | **2** (Easy) / **4** (Medium) / **6** (Hard) every stage (reset on each point serve) + **O** temp stones; **X** permanent remove; **H** hide ~6s then random respawn (**Medium/Hard** only) |
 | Multi-ball | **M** spawns secondary slot for 5s; `setBallEntries([primary, secondary])` — no `.push` (Reanimated freeze) |
 | Ball speed | `nextPaddleHitSpeed()` uses `Math.hypot(vx, vy)` × boost multiplier; stone bounce min-speed floor |
@@ -157,7 +157,6 @@ Full `POWERUP_LABELS` in `src/constants/game.ts`. Collector = court-half owner o
 | **G** | Blue | Grow | Collector paddle height × 1.5 | 5 s |
 | **S** | Red | Shrink | Collector paddle height × 0.6 | 5 s |
 | **F** | Cyan | Fast | AI speed × 1.4 or player input × 1.4 | 5 s |
-| **T** | Green | Thick | Paddle short-edge × 1.4 | 5 s |
 | **N** | Orange | Narrow | Paddle short-edge × 0.7 | 5 s |
 | **K** | Purple | Sticky | Ball sticks ~300ms on paddle hit | 5 s |
 | **B** | Yellow | Boost | Ball speed × 1.25 | 3 s |
@@ -505,8 +504,7 @@ Extend `PowerupType` + `applyPowerup()` in `GameScreen.tsx` (paddle shared value
 | **G** | Blue `#007AFF` | Grow | Height × 1.5 | ✅ Shipped (Phase7) |
 | **S** | Red `#FF3B30` | Shrink | Height × 0.6 | ✅ Shipped (Phase7) |
 | **F** | Cyan `#32ADE6` | Fast | AI speed × 1.4 or player drag responsiveness | ✅ `aiSpeedMultiplierSV` / `playerInputMultiplierSV` |
-| **T** | Green `#34C759` | Thick | Paddle short-edge × 1.4 | ✅ Per-paddle `leftPaddleWidthSV` / `rightPaddleWidthSV` |
-| **N** | Orange `#FF9500` | Narrow | Paddle short-edge × 0.7 | ✅ Same width SVs |
+| **N** | Orange `#FF9500` | Narrow | Paddle short-edge × 0.7 | ✅ Per-paddle `leftPaddleWidthSV` / `rightPaddleWidthSV` |
 | **K** | Purple `#AF52DE` | Sticky | Ball attaches ~300ms on hit, then releases with aim | ✅ `leftSticky` / `rightSticky` + attach countdown |
 
 ### Tier 2 — Ball modifiers *(medium; `ballPhysics.ts`)*

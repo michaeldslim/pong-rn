@@ -41,7 +41,6 @@ export type PowerupType =
   | 'grow'
   | 'shrink'
   | 'fast'
-  | 'thick'
   | 'narrow'
   | 'sticky'
   | 'boost'
@@ -71,7 +70,6 @@ export const POWERUP_PULSE_WINDOW_MS = 2000;
 
 export const PADDLE_HEIGHT_BUFF = 1.5;
 export const PADDLE_HEIGHT_DEBUFF = 0.6;
-export const PADDLE_WIDTH_BUFF = 1.4;
 export const PADDLE_WIDTH_DEBUFF = 0.7;
 export const FAST_MULTIPLIER = 1.4;
 export const BOOST_MULTIPLIER = 1.25;
@@ -80,7 +78,6 @@ export const POWERUP_LABELS: Record<PowerupType, string> = {
   grow: 'G',
   shrink: 'S',
   fast: 'F',
-  thick: 'T',
   narrow: 'N',
   sticky: 'K',
   boost: 'B',
@@ -101,7 +98,6 @@ export const POWERUP_COLORS: Record<PowerupType, string> = {
   grow: '#007AFF',
   shrink: '#FF3B30',
   fast: '#32ADE6',
-  thick: '#34C759',
   narrow: '#FF9500',
   sticky: '#AF52DE',
   boost: '#FFCC00',
@@ -122,7 +118,6 @@ export const POWERUP_RING: Record<PowerupType, PowerupRing> = {
   grow: 'buff',
   shrink: 'debuff',
   fast: 'buff',
-  thick: 'buff',
   narrow: 'debuff',
   sticky: 'buff',
   boost: 'buff',
@@ -150,7 +145,6 @@ export const POWERUP_HUD_LABELS: Record<PowerupType, string> = {
   grow: 'G↑',
   shrink: 'S↓',
   fast: 'F⚡',
-  thick: 'T↔',
   narrow: 'N↔',
   sticky: 'K◎',
   boost: 'B»',

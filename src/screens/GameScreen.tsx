@@ -30,6 +30,7 @@ import { ScoreBoard } from '../components/ScoreBoard';
 import { StartOverlay } from '../components/StartOverlay';
 import { Stone } from '../components/Stone';
 import { WinOverlay } from '../components/WinOverlay';
+import { StageLightningFlash } from '../components/StageLightningFlash';
 import type { AiDifficulty, PowerupType } from '../constants/game';
 import {
   BALL_SIZE,
@@ -41,7 +42,6 @@ import {
   PADDLE_HEIGHT_BUFF,
   PADDLE_HEIGHT_DEBUFF,
   PADDLE_WIDTH,
-  PADDLE_WIDTH_BUFF,
   PADDLE_WIDTH_DEBUFF,
   POWERUP_EFFECT_DURATION_MS,
   POWERUP_HUD_LABELS,
@@ -110,6 +110,9 @@ export function GameScreen() {
   const [lockedGameplayPortrait, setLockedGameplayPortrait] = useState<boolean | null>(null);
   const [rotationBannerVisible, setRotationBannerVisible] = useState(false);
   const [rotationBannerTick, setRotationBannerTick] = useState(0);
+  const [stageFlashCollector, setStageFlashCollector] = useState<Collector | null>(null);
+
+  const stageFlashCollectorRef = useRef<Collector | null>(null);
 
   const winnerRef = useRef<string | null>(null);
   const gameStartedRef = useRef(gameStarted);
@@ -219,6 +222,7 @@ export function GameScreen() {
   const playerScoreSV = useSharedValue(0);
   const isPlaying = useSharedValue(false);
   const isPausedSV = useSharedValue(0);
+  const stageFlashActiveSV = useSharedValue(0);
   const ballAttached = useSharedValue(false);
   const attachCountdown = useSharedValue(0);
   const ballAttachSide = useSharedValue(0);
@@ -928,12 +932,6 @@ export function GameScreen() {
   const awardStagePoint = useCallback((collector: Collector) => {
     if (!isPlaying.value || winnerRef.current) return;
 
-    clearAttachTimer();
-    hideBallTrail();
-    ballAttached.value = false;
-    attachCountdown.value = 0;
-    setBallEntries([getPrimaryBallEntry()]);
-
     const scoredByPlayer = collector === 'You';
     if (scoredByPlayer) {
       const next = playerScoreSV.value + 1;
@@ -957,13 +955,36 @@ export function GameScreen() {
       return;
     }
     launchBall(serveSideAfterScore(false), true, 1000);
+  }, [launchBall, recordWinner]);
+
+  const completeStageFlash = useCallback(() => {
+    const collector = stageFlashCollectorRef.current;
+    stageFlashCollectorRef.current = null;
+    setStageFlashCollector(null);
+    stageFlashActiveSV.value = 0;
+    if (collector) {
+      awardStagePoint(collector);
+    }
+  }, [awardStagePoint, stageFlashActiveSV]);
+
+  const triggerStageWin = useCallback((collector: Collector) => {
+    if (!isPlaying.value || winnerRef.current || stageFlashCollectorRef.current) return;
+
+    clearAttachTimer();
+    hideBallTrail();
+    ballAttached.value = false;
+    attachCountdown.value = 0;
+    setBallEntries([getPrimaryBallEntry()]);
+    stageFlashActiveSV.value = 1;
+    stageFlashCollectorRef.current = collector;
+    setStageFlashCollector(collector);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
   }, [
     clearAttachTimer,
     getPrimaryBallEntry,
     hideBallTrail,
-    launchBall,
-    recordWinner,
     setBallEntries,
+    stageFlashActiveSV,
   ]);
 
   const applyResolvedPowerup = useCallback((
@@ -984,9 +1005,6 @@ export function GameScreen() {
         break;
       case 'enemy':
         applyPaddleHeightEffect(resolvePaddleTarget(type, collector), PADDLE_HEIGHT_DEBUFF, type);
-        break;
-      case 'thick':
-        applyPaddleWidthEffect(resolvePaddleTarget(type, collector), PADDLE_WIDTH_BUFF, type);
         break;
       case 'narrow':
         applyPaddleWidthEffect(resolvePaddleTarget(type, collector), PADDLE_WIDTH_DEBUFF, type);
@@ -1022,7 +1040,7 @@ export function GameScreen() {
         applyZoneEffect(collector);
         break;
       case 'stage':
-        awardStagePoint(collector);
+        triggerStageWin(collector);
         break;
       default:
         break;
@@ -1039,7 +1057,7 @@ export function GameScreen() {
     applyReverseEffect,
     applyStickyEffect,
     applyZoneEffect,
-    awardStagePoint,
+    triggerStageWin,
     spawnSecondBall,
   ]);
 
@@ -1104,6 +1122,9 @@ export function GameScreen() {
       applyCourtColor(courtColorMode);
 
       resetPowerupEffects();
+      stageFlashCollectorRef.current = null;
+      setStageFlashCollector(null);
+      stageFlashActiveSV.value = 0;
       leftPaddleHeight.value = metrics.paddleHeight;
       rightPaddleHeight.value = metrics.paddleHeight;
       leftPaddleWidthSV.value = metrics.paddleWidth;
@@ -1318,7 +1339,7 @@ export function GameScreen() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useFrameCallback((frameInfo: FrameInfo) => {
-    if (!isPlaying.value || isPausedSV.value) return;
+    if (!isPlaying.value || isPausedSV.value || stageFlashActiveSV.value) return;
 
     const dt =
       frameInfo.timeSincePreviousFrame != null
@@ -1511,6 +1532,12 @@ export function GameScreen() {
               }}
             />
           ))}
+          {stageFlashCollector && (
+            <StageLightningFlash
+              collector={stageFlashCollector}
+              onComplete={completeStageFlash}
+            />
+          )}
         </>
       )}
     </>
