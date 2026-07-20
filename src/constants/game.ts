@@ -53,7 +53,8 @@ export type PowerupType =
   | 'zone'
   | 'ally'
   | 'enemy'
-  | 'mystery';
+  | 'mystery'
+  | 'stage';
 
 export type PowerupRing = 'buff' | 'debuff' | 'mystery';
 
@@ -90,6 +91,7 @@ export const POWERUP_LABELS: Record<PowerupType, string> = {
   ally: 'A',
   enemy: 'E',
   mystery: '?',
+  stage: 'W',
 };
 
 export const POWERUP_COLORS: Record<PowerupType, string> = {
@@ -109,6 +111,7 @@ export const POWERUP_COLORS: Record<PowerupType, string> = {
   ally: '#007AFF',
   enemy: '#FF3B30',
   mystery: '#FFD60A',
+  stage: '#34C759',
 };
 
 export const POWERUP_RING: Record<PowerupType, PowerupRing> = {
@@ -128,6 +131,7 @@ export const POWERUP_RING: Record<PowerupType, PowerupRing> = {
   ally: 'buff',
   enemy: 'debuff',
   mystery: 'mystery',
+  stage: 'buff',
 };
 
 export const POWERUP_RING_COLORS: Record<PowerupRing, string> = {
@@ -154,12 +158,16 @@ export const POWERUP_HUD_LABELS: Record<PowerupType, string> = {
   ally: 'A↑',
   enemy: 'E↓',
   mystery: '?',
+  stage: 'W+1',
 };
 
-// Court stones — random obstacles that reflect the ball
+// Court stones — random obstacles that reflect the ball (count capped by difficulty)
 export const STONE_RADIUS_BASE = 16;
-export const STONE_COUNT_MIN = 3;
-export const STONE_COUNT_MAX = 4;
+export const STONE_COUNT_MAX_BY_DIFFICULTY: Record<AiDifficulty, number> = {
+  easy: 2,
+  medium: 4,
+  hard: 6,
+};
 
 // Maximum shared-value-backed ball slots (pool size for splitting)
 export const MAX_BALL_SLOTS = 6;

@@ -1,4 +1,8 @@
-import { STONE_COUNT_MAX, STONE_COUNT_MIN, STONE_RADIUS_BASE } from '../constants/game';
+import {
+  STONE_COUNT_MAX_BY_DIFFICULTY,
+  STONE_RADIUS_BASE,
+  type AiDifficulty,
+} from '../constants/game';
 
 export interface CourtStone {
   id: number;
@@ -16,8 +20,9 @@ interface StonePlacementMetrics {
 
 const MAX_PLACEMENT_ATTEMPTS = 48;
 
-function randomStoneCount(): number {
-  return STONE_COUNT_MIN + Math.floor(Math.random() * (STONE_COUNT_MAX - STONE_COUNT_MIN + 1));
+function randomStoneCount(difficulty: AiDifficulty): number {
+  const max = STONE_COUNT_MAX_BY_DIFFICULTY[difficulty];
+  return Math.floor(Math.random() * (max + 1));
 }
 
 function placementBounds(
@@ -64,13 +69,14 @@ export function generateCourtStones(
   scale: number,
   portrait: boolean,
   metrics: StonePlacementMetrics,
+  difficulty: AiDifficulty,
 ): CourtStone[] {
   const radius = STONE_RADIUS_BASE * scale;
   const { minX, maxX, minY, maxY } = placementBounds(courtW, courtH, radius, portrait, metrics);
 
   if (maxX <= minX || maxY <= minY) return [];
 
-  const targetCount = randomStoneCount();
+  const targetCount = randomStoneCount(difficulty);
   const placed: CourtStone[] = [];
 
   for (let id = 1; id <= targetCount; id++) {
