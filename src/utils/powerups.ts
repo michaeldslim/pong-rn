@@ -41,7 +41,6 @@ function buildSpawnPool(difficulty: AiDifficulty, playerLosing: boolean): Weight
     { type: 'reverse', weight: 4 },
     { type: 'obstacle', weight: 5 },
     { type: 'clear', weight: 4 },
-    { type: 'hideStone', weight: 5 },
     { type: 'zone', weight: 4 },
     { type: 'stage', weight: 2 },
     { type: 'mystery', weight: 3 },
@@ -55,22 +54,18 @@ function buildSpawnPool(difficulty: AiDifficulty, playerLosing: boolean): Weight
     });
   }
 
-  if (difficulty === 'mediumPlus') {
-    return base.map((entry) => {
-      if (entry.type === 'enemy' || entry.type === 'shrink' || entry.type === 'hideStone') {
-        return { ...entry, weight: entry.weight + 2 };
-      }
-      return entry;
-    });
-  }
-
   if (difficulty === 'hard') {
-    return base.map((entry) => {
+    const hardPool = base.map((entry) => {
       if (entry.type === 'enemy' || entry.type === 'mystery' || entry.type === 'shrink') {
         return { ...entry, weight: entry.weight + 4 };
       }
       return entry;
     });
+    return [...hardPool, { type: 'hideStone', weight: 7 }];
+  }
+
+  if (difficulty === 'medium') {
+    return [...base, { type: 'hideStone', weight: 5 }];
   }
 
   return base;

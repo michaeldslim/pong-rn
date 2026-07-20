@@ -19,19 +19,17 @@ export const MAX_BALL_SPEED = 14;         // upper ceiling
 // AI tuning — lower = easier to beat
 export const AI_SPEED = 3.5; // max px per frame the AI paddle can move (medium default)
 
-export type AiDifficulty = 'easy' | 'medium' | 'mediumPlus' | 'hard';
+export type AiDifficulty = 'easy' | 'medium' | 'hard';
 
 export const AI_SPEED_BY_DIFFICULTY: Record<AiDifficulty, number> = {
   easy: 2.2,
   medium: 3.5,
-  mediumPlus: 4.2,
   hard: 5.2,
 };
 
 export const AI_DIFFICULTY_LABELS: Record<AiDifficulty, string> = {
   easy: 'Easy',
   medium: 'Medium',
-  mediumPlus: 'Medium+',
   hard: 'Hard',
 };
 
@@ -174,7 +172,6 @@ export const STONE_RADIUS_BASE = 16;
 export const STONE_COUNT_MAX_BY_DIFFICULTY: Record<AiDifficulty, number> = {
   easy: 2,
   medium: 4,
-  mediumPlus: 5,
   hard: 6,
 };
 

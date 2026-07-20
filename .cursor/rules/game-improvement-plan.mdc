@@ -28,7 +28,7 @@ Investigation and implementation roadmap. **Priority: HUD board — centered hor
 
 Powerups spawn on court during play (~every 8s, max 5, 6s lifetime). Each is a **colored circle with a white first-letter label** and a **buff / debuff / mystery ring** (blue / red / gold). The collector is whichever side owns that half of the court when the ball hits or you tap the orb — **AI** (left/top) or **You** (right/bottom).
 
-**18 types** in `POWERUP_LABELS` / `POWERUP_COLORS` (`src/constants/game.ts`). Spawn weights in `pickSpawnPowerup()` (`src/utils/powerups.ts`) — Easy biases grow/ally when losing; Medium+ / Hard bias enemy/shrink/**H**; Hard adds mystery.
+**18 types** in `POWERUP_LABELS` / `POWERUP_COLORS` (`src/constants/game.ts`). Spawn weights in `pickSpawnPowerup()` (`src/utils/powerups.ts`) — Easy biases grow/ally when losing; Hard biases enemy/mystery/shrink; **H** spawns on **Medium** and **Hard** only.
 
 | Tier | Labels | Summary |
 |------|--------|---------|
@@ -138,12 +138,12 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 | Ball lifecycle | `beginMatch()` — measured court only (`courtW`/`courtH` from `onLayout`); defer via `pendingServeSideRef` + backup `useEffect`; primary ball **always rendered** from `primaryBX`/`primaryBY` shared values; `setBallEntries()` replaces array (never `.push` on worklet-frozen ref); `launchBall` before `isPlaying` and before `setGameStarted`; `snapAttachedBall` on layout; `recoverActiveMatchBall` on `AppState` active |
 | Serve | Player serves first; tap-to-launch on player attach; JS-thread `releaseAttachedBall` |
 | Entities | Scaled from court size via `computeCourtMetrics` |
-| Difficulty | Easy / Medium / **Medium+** / Hard — start overlay + HUD badge; scales AI speed, powerup spawn bias, **stone count** |
+| Difficulty | Easy / Medium / Hard — start overlay + HUD badge; scales AI speed, powerup spawn bias, **stone count** |
 | Court color | Classic (green) / Random — **Board** toggle on intro; `courtBackgroundColor` on court view |
 | Pause | HUD corner button; Space/P on web; court-framed `PauseOverlay` |
 | Feel | Haptic + sound on paddle hit; **soft haptic + quieter tap on stone bounce**; ball trail; paddle hit flash |
 | Powerups | 18 types; weighted spawn; HUD chips; rings; mystery `?`; **W** stage point; **H** temp stone hide |
-| Stones | **0–2** (Easy) / **0–4** (Medium) / **0–5** (Medium+) / **0–6** (Hard) per match + **O** temp stones; **X** permanent remove; **H** hide ~6s then random respawn; regen on Start / Play Again |
+| Stones | **0–2** (Easy) / **0–4** (Medium) / **0–6** (Hard) per match + **O** temp stones; **X** permanent remove; **H** hide ~6s then random respawn (**Medium/Hard** only); regen on Start / Play Again |
 | Multi-ball | **M** spawns secondary slot for 5s; `setBallEntries([primary, secondary])` — no `.push` (Reanimated freeze) |
 | Ball speed | `nextPaddleHitSpeed()` uses `Math.hypot(vx, vy)` × boost multiplier; stone bounce min-speed floor |
 | Paddle bounds | `clampPaddlesToCourt()` on powerup + layout; pan/keyboard/AI use live paddle length + width |
@@ -450,7 +450,7 @@ Note: center court still has intentional **0.75×** travel speed on the primary 
 | Constant | Value |
 |----------|-------|
 | `STONE_RADIUS_BASE` | 16 px (scaled by court) |
-| `STONE_COUNT_MAX_BY_DIFFICULTY` | Easy **2**, Medium **4**, Medium+ **5**, Hard **6** (random 0…max each match) |
+| `STONE_COUNT_MAX_BY_DIFFICULTY` | Easy **2**, Medium **4**, Hard **6** (random 0…max each match) |
 | `HIDDEN_STONE_DURATION_MS` | 6000 — **H** hide-stone respawn delay |
 
 ### Ball serve & launch (`ballLaunch.ts`)
@@ -524,7 +524,7 @@ Extend `PowerupType` + `applyPowerup()` in `GameScreen.tsx` (paddle shared value
 |-------|-------------------|------|--------|-------|
 | **O** | Brown `#A2845E` | Obstacle | Spawn 1 temporary stone (~8s) | ✅ `placeTemporaryStone()` + timeout remove |
 | **X** | Gray `#8E8E93` | Clear | Remove nearest stone to orb | ✅ `removeNearestStone()` |
-| **H** | Cyan `#64D2FF` | Hide | Hide nearest stone ~6s; respawn random | ✅ `takeNearestStone()` + `relocateStoneAtRandom()` |
+| **H** | Cyan `#64D2FF` | Hide | Hide nearest stone ~6s; respawn random | ✅ `takeNearestStone()` + `relocateStoneAtRandom()`; spawn **Medium/Hard** only |
 | **Z** | Indigo `#5856D6` | Zone | Invert or disable center `zoneMult` slow for 5s | ✅ `zoneMultDisabledSV` |
 
 ### Tier 4 — Mind-game *(high fun)*
@@ -625,8 +625,7 @@ Extend `PowerupType` + `applyPowerup()` in `GameScreen.tsx` (paddle shared value
 12. Multi-ball crash → fixed via `setBallEntries` replace (no `.push` on worklet-frozen array)
 13. Stone count → scales by difficulty: Easy up to 2, Medium up to 4, Hard up to 6 (`STONE_COUNT_MAX_BY_DIFFICULTY`)
 14. **W — Stage** powerup → instant +1 point to collector (`awardStagePoint`); does not bypass `WIN_SCORE` match rule; not in mystery pool
-15. **Medium+** difficulty → AI speed 4.2, up to 5 stones; intro picker between Medium and Hard
-16. **H — Hide** powerup → nearest stone off court 6s (`HIDDEN_STONE_DURATION_MS`), then `relocateStoneAtRandom()`; unlike **X** (permanent)
+16. **H — Hide** powerup → nearest stone off court 6s (`HIDDEN_STONE_DURATION_MS`), then `relocateStoneAtRandom()`; unlike **X** (permanent); spawns on **Medium** and **Hard** only
 
 ## Next Steps
 
