@@ -28,7 +28,7 @@ Investigation and implementation roadmap. **Priority: HUD board — centered hor
 
 Powerups spawn on court during play (~every 8s, max 5, 6s lifetime). Each is a **colored circle with a white first-letter label** and a **buff / debuff / mystery ring** (blue / red / gold). The collector is whichever side owns that half of the court when the ball hits or you tap the orb — **AI** (left/top) or **You** (right/bottom).
 
-**16 types** in `POWERUP_LABELS` / `POWERUP_COLORS` (`src/constants/game.ts`). Spawn weights in `pickSpawnPowerup()` (`src/utils/powerups.ts`) — Easy biases grow/ally when losing; Hard biases enemy/mystery/shrink.
+**17 types** in `POWERUP_LABELS` / `POWERUP_COLORS` (`src/constants/game.ts`). Spawn weights in `pickSpawnPowerup()` (`src/utils/powerups.ts`) — Easy biases grow/ally when losing; Hard biases enemy/mystery/shrink.
 
 | Tier | Labels | Summary |
 |------|--------|---------|
@@ -36,6 +36,7 @@ Powerups spawn on court during play (~every 8s, max 5, 6s lifetime). Each is a *
 | Ball | **B C M R** | Boost, Curve, Multi (2-ball), Reverse |
 | Court | **O X Z** | Temp stone, Clear stone, Disable center slow |
 | Mind-game | **A E ?** | Ally buff, Enemy debuff (opponent), Mystery roll |
+| Score | **W** | Force **stage** win (+1 point to collector; match still ends at `WIN_SCORE`) |
 
 **HUD chips** beside AI / You scores show active effects (`POWERUP_HUD_LABELS`, e.g. `G↑`, `B»`, `E↓`). Component: `src/components/Powerup.tsx` (orb pulse in last 2s). Collector rules + full tier tables in **Phase8** below.
 
@@ -97,7 +98,7 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 | `src/hooks/useGameplayOrientationLock.ts` | Lock/unlock orientation; accelerometer tilt detect; dimension fallback |
 | `src/physics/ballPhysics.ts` | Ball + paddle collisions; stone bounce + `playStoneHit`; boost/curve/zone/sticky; per-paddle width |
 | `src/utils/courtMetrics.ts` | Proportional scaling, `LayoutConfig`, tablet sizing |
-| `src/utils/stones.ts` | Random court-stone placement; `placeTemporaryStone` / `removeNearestStone` for **O** / **X** |
+| `src/utils/stones.ts` | Random court-stone placement (difficulty-scaled count); `placeTemporaryStone` / `removeNearestStone` for **O** / **X** |
 | `src/utils/powerups.ts` | `pickSpawnPowerup`, `resolvePaddleTarget`, `rollMysteryType`, difficulty bias |
 | `src/utils/ballLaunch.ts` | Serve sides, random launch velocity, attach position, paddle offset |
 | `src/utils/paddleBounds.ts` | `clampPaddleOrigin()` — keep full paddle inside court on movable axis |
@@ -137,12 +138,12 @@ Mid-game live relayout was removed after device QA showed broken paddle position
 | Ball lifecycle | `beginMatch()` — measured court only (`courtW`/`courtH` from `onLayout`); defer via `pendingServeSideRef` + backup `useEffect`; primary ball **always rendered** from `primaryBX`/`primaryBY` shared values; `setBallEntries()` replaces array (never `.push` on worklet-frozen ref); `launchBall` before `isPlaying` and before `setGameStarted`; `snapAttachedBall` on layout; `recoverActiveMatchBall` on `AppState` active |
 | Serve | Player serves first; tap-to-launch on player attach; JS-thread `releaseAttachedBall` |
 | Entities | Scaled from court size via `computeCourtMetrics` |
-| Difficulty | Easy / Medium / Hard — start overlay + HUD badge; scales AI speed + powerup spawn bias |
+| Difficulty | Easy / Medium / Hard — start overlay + HUD badge; scales AI speed, powerup spawn bias, **stone count** |
 | Court color | Classic (green) / Random — **Board** toggle on intro; `courtBackgroundColor` on court view |
 | Pause | HUD corner button; Space/P on web; court-framed `PauseOverlay` |
 | Feel | Haptic + sound on paddle hit; **soft haptic + quieter tap on stone bounce**; ball trail; paddle hit flash |
-| Powerups | 16 types; weighted spawn; HUD chips; rings; mystery `?`; stacking refreshes duration |
-| Stones | 3–4 per match + temporary stones from **O**; **X** removes nearest; regen on Start / Play Again |
+| Powerups | 17 types; weighted spawn; HUD chips; rings; mystery `?`; **W** awards one point (stage, not instant match win) |
+| Stones | **0–2** (Easy) / **0–4** (Medium) / **0–6** (Hard) per match + temporary stones from **O**; **X** removes nearest; regen on Start / Play Again |
 | Multi-ball | **M** spawns secondary slot for 5s; `setBallEntries([primary, secondary])` — no `.push` (Reanimated freeze) |
 | Ball speed | `nextPaddleHitSpeed()` uses `Math.hypot(vx, vy)` × boost multiplier; stone bounce min-speed floor |
 | Paddle bounds | `clampPaddlesToCourt()` on powerup + layout; pan/keyboard/AI use live paddle length + width |
@@ -169,6 +170,7 @@ Full `POWERUP_LABELS` in `src/constants/game.ts`. Collector = court-half owner o
 | **A** | Blue | Ally | Grow collector paddle | 5 s |
 | **E** | Red | Enemy | Shrink **opponent** paddle | 5 s |
 | **?** | Gold | Mystery | Random tier 1–2 effect | varies |
+| **W** | Green | Stage | **+1 point** to collector (ends rally; not a free match win) | instant |
 
 ---
 
@@ -428,7 +430,7 @@ npx expo run:android
 ### Stones — random obstacles
 
 - [x] `Stone.tsx` — gray rocky circles on court
-- [x] `generateCourtStones()` in `stones.ts` — random count (3–4) and positions
+- [x] `generateCourtStones()` in `stones.ts` — random count (0 to difficulty max) and positions
 - [x] Placement avoids paddle zones and stone overlap (rejection sampling)
 - [x] `resolveStoneCollisions()` in `ballPhysics.ts` — UI-thread circle bounce
 - [x] Regenerate on **Start** / **Play Again**; stable during active rally (not on every layout)
@@ -447,8 +449,7 @@ Note: center court still has intentional **0.75×** travel speed on the primary 
 | Constant | Value |
 |----------|-------|
 | `STONE_RADIUS_BASE` | 16 px (scaled by court) |
-| `STONE_COUNT_MIN` | 3 |
-| `STONE_COUNT_MAX` | 4 |
+| `STONE_COUNT_MAX_BY_DIFFICULTY` | Easy **2**, Medium **4**, Hard **6** (random 0…max each match) |
 
 ### Ball serve & launch (`ballLaunch.ts`)
 
@@ -530,6 +531,12 @@ Extend `PowerupType` + `applyPowerup()` in `GameScreen.tsx` (paddle shared value
 | **A** | Blue ring | Ally | Buff **collector** | ✅ Same as grow on collector paddle |
 | **E** | Red ring | Enemy | Debuff **opponent** (invert collector) | ✅ Shrink on opponent paddle |
 | **?** | Gold `#FFD60A` | Mystery | Random effect from Tier 1–2 pool | ✅ `rollMysteryType()` on collect |
+
+### Tier 5 — Stage score *(instant point)*
+
+| Label | Color (suggested) | Type | Effect | Notes |
+|-------|-------------------|------|--------|-------|
+| **W** | Green `#34C759` | Stage | Award **+1 point** to collector | ✅ `awardStagePoint()` — clears balls, `serveSideAfterScore()`; match win only at `WIN_SCORE`; rare spawn (weight 2); excluded from mystery pool |
 
 ### UX & balance *(Phase8 polish)*
 
@@ -613,6 +620,8 @@ Extend `PowerupType` + `applyPowerup()` in `GameScreen.tsx` (paddle shared value
 10. Court color → **Classic** (default green) or **Random** (6-color palette); intro toggle; roll on start/play again
 11. Missing ball on app restart → fixed via measured-court-only `beginMatch`, `courtReady` Start gate, primary ball shared-value render, `setBallEntries` immutable pool
 12. Multi-ball crash → fixed via `setBallEntries` replace (no `.push` on worklet-frozen array)
+13. Stone count → scales by difficulty: Easy up to 2, Medium up to 4, Hard up to 6 (`STONE_COUNT_MAX_BY_DIFFICULTY`)
+14. **W — Stage** powerup → instant +1 point to collector (`awardStagePoint`); does not bypass `WIN_SCORE` match rule; not in mystery pool
 
 ## Next Steps
 
